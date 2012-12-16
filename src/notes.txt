@@ -1,0 +1,44 @@
+Parallelize goroutines/channel-based dataflows
+  - How can existing data patterns be operated on by channel-based concurrency?
+
+Input and output around channels
+
+Tags I/O (a list of grid dimensions, items to process, etc)
+  - Split threads around tag values
+  - Each thread only accesses data corresponding to its tag
+  - How to output data and tag values
+Data I/O (matrix, binary blob, etc)
+
+Reading from channels - 1 thread per read. Read all channel data into an array, then launch the right thread dimensions. Read timeouts? Don't need to wait for all of one stage to finish before computing the next in certain circumstances.
+
+Writing to channels - parallel append()
+  - Atomic increment per shared block, combine shared results at the end
+  - Two-phase emit (prefix-sum, write)
+
+All channels are for tags (indexes to operate on, split between threads)
+
+type Matrix struct {
+  data []float64
+  width int
+  height int
+}
+
+func (m *Matrix) get(x, y int) (v *float64) {
+  v = &m.data[y*m.width + x]
+  return
+}
+
+func reduce(tags chan int, matrix Matrix) {
+  for threadIdx_x := range tags {
+    // traditional OpenCL kernel here
+    *matrix.get(threadIdx_x, 0)
+  }
+}
+
+Reductions: channels store the list of indexes. Divide-and-conquer
+
+vals := make([]int, 1000)
+sum := 0
+for i, val := range vals {
+  sum += val
+}

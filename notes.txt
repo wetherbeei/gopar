@@ -11,6 +11,25 @@ Go-to-C translation:
 - Simple support, no interfaces/typecasting/etc
 - Support for ordered channel writes within kernels (prefix sum prerun for idx)
 
-Runtime behavior:
-go - detect channel write to parallelized kernel
-GPU 
+Parallel kernel detection:
+- Only range/simple for loops
+  go func() {
+    for i := 0 ; i < 7*6*5*4*3*2 ; i++ {
+      c <- f(i)
+    }
+    done<- 1
+  }()
+  go func() {
+    for i := range workchan {
+      c <- f(i)
+    }
+    done<- 1
+  }()
+- The loop is parallelized, outer go code is run as normal. Only allow 1 loop
+per goroutine launch? Guess not, no reason to, just check data dependencies
+between kernel launches.
+
+
+Runtime behavior: /gopar/rtlib
+- detect channel write to parallelized kernel
+- decide to batch/start timeout to 
