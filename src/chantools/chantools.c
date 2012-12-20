@@ -2,6 +2,7 @@
 
 #include "runtime.h"
 
+// Structure defs mirrored from go/src/pkg/runtime/chan.c
 typedef struct  WaitQ WaitQ;
 typedef struct  SudoG SudoG;
 struct  SudoG
@@ -34,10 +35,11 @@ struct  Hchan
 };
 #define chanbuf(c, i) ((byte*)((c)+1)+(uintptr)(c)->elemsize*(i))
 
-void ·ChanDebug(Hchan** cc) {
+void ·chanDebug(ChanType *t, Hchan** cc) {
+
   Hchan* c = *cc;
   runtime·lock(c);
-  runtime·printf("ChanPtr: %p\n", c);
+  runtime·printf("Type: %p, ChanPtr: %p\n", t, c);
   runtime·printf("QSize:%d, Elem:%d\n", c->dataqsiz, c->elemsize);
   runtime·printf("Value count: %d\n", c->qcount);
   if (c->dataqsiz < 1) {
@@ -50,7 +52,7 @@ void ·ChanDebug(Hchan** cc) {
 
 // Main batching function
 // Read up to minnum values from the channel into a new array
-void ·ChanRead(Hchan** cc, uint32 minnum, Slice ret) {
+void ·ChanRead(Hchan** cc, uint32 minnum, Slice* ret) {
   Hchan* c = *cc;
   runtime·lock(c);
   if (c->qcount < minnum) {
@@ -66,9 +68,7 @@ void ·ChanRead(Hchan** cc, uint32 minnum, Slice ret) {
     runtime·printf("Cannot peek on an unbuffered channel\n");
     return;
   }
-  
+  c->elemalg->copy(c->elemsize, newdata, chanbuf(c, c->recvx));
   runtime·printf("Peeking at [recv:%d send:%d %d/%d]\n", c->recvx, c->sendx, c->qcount, c->dataqsiz);
   runtime·unlock(c);
 }
-
-void ·ChanWrite(Hchan** cc, byte* vals, ) {
