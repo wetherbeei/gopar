@@ -35,10 +35,10 @@ struct  Hchan
 };
 #define chanbuf(c, i) ((byte*)((c)+1)+(uintptr)(c)->elemsize*(i))
 
-void ·chanDebug(ChanType *t, Hchan** cc) {
+void ·ChanDebug(ChanType *t, Hchan** cc) {
 
   Hchan* c = *cc;
-  runtime·lock(c);
+  //runtime·lock(c);
   runtime·printf("Type: %p, ChanPtr: %p\n", t, c);
   runtime·printf("QSize:%d, Elem:%d\n", c->dataqsiz, c->elemsize);
   runtime·printf("Value count: %d\n", c->qcount);
@@ -47,7 +47,7 @@ void ·chanDebug(ChanType *t, Hchan** cc) {
     return;
   }
   runtime·printf("Peeking at [recv:%d send:%d %d/%d]\n", c->recvx, c->sendx, c->qcount, c->dataqsiz);
-  runtime·unlock(c);
+  //runtime·unlock(c);
 }
 
 // Main batching function

@@ -16,6 +16,7 @@ func main() {
 	chantools.ChanDebug(ptr)
 }
 
+/*
 func translatedKernel() {
 	done := make(chan int)
 	a := make([]int, 1000000)
@@ -36,3 +37,4 @@ func translatedKernel() {
 
 	<-done
 }
+*/

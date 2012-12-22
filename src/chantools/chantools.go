@@ -2,8 +2,8 @@ package chantools
 
 import "unsafe"
 
-func ChanDebug(c interface{}) {
+func chanDebug(c interface{}) {
 	chanDebug(unsafe.Pointer(&c))
 }
 
-func chanDebug(c unsafe.Pointer)
+func ChanDebug(c interface{})
