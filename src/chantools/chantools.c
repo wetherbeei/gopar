@@ -50,7 +50,7 @@ void ·ChanDebug(uint32 t, Hchan* c) {
 
 // Main batching function
 // Read up to minnum values from the channel into a new array
-void ·ChanRead(uint32 t, Hchan* c, uint32 minnum, byte* ret, uint32 len) {
+void ·ChanRead(uint32 t, Hchan* c, uint32 minnum, byte* ret, uint32 len, uint32 size) {
   runtime·lock(c);
   runtime·printf("%d <= %d?\n", minnum, c->qcount);
   len = c->qcount;
@@ -61,7 +61,9 @@ void ·ChanRead(uint32 t, Hchan* c, uint32 minnum, byte* ret, uint32 len) {
     runtime·unlock(c);
     return;
   }
-  ret = (byte*) runtime·mal(c->elemsize * c->qcount);
+  size = c->elemsize * c->qcount;
+  FLUSH(&size);
+  ret = (byte*) runtime·mal(size);
   FLUSH(&ret);
   runtime·printf("ChanPtr: %p, %x\n", c, t);
   runtime·printf("QSize:%d, Elem:%d\n", c->dataqsiz, c->elemsize);
@@ -71,7 +73,22 @@ void ·ChanRead(uint32 t, Hchan* c, uint32 minnum, byte* ret, uint32 len) {
     runtime·unlock(c);
     return;
   }
-  c->elemalg->copy(c->elemsize, (ret + 0), chanbuf(c, c->recvx));
+  // Copy values from the channel
   runtime·printf("Reading [recv:%d send:%d %d/%d]\n", c->recvx, c->sendx, c->qcount, c->dataqsiz);
+  // TODO (performance): change to a memcpy
+  int32 j = 0;
+  for (int32 i = c->recvx; i < c->sendx && i < c->dataqsiz; i++) {
+    c->elemalg->copy(c->elemsize, (ret + (j * c->elemsize)), chanbuf(c, i));
+    j++;
+  }
+  if (c->sendx < c->recvx) {
+    // Wrapped around
+    for (int32 i = 0; i < c->sendx; i++) {
+      c->elemalg->copy(c->elemsize, (ret + (j * c->elemsize)), chanbuf(c, i));
+      j++;
+    }
+  }
+  c->recvx = c->sendx = 0;
+  c->qcount = 0;
   runtime·unlock(c);
 }

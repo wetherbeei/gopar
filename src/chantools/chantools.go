@@ -2,4 +2,4 @@ package chantools
 
 func ChanDebug(c interface{})
 
-func ChanRead(c interface{}, minnum int) (*byte, uint32)
+func ChanRead(c interface{}, minnum int) (data uintptr, length int, size uint32)
