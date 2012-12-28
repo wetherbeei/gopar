@@ -3,7 +3,6 @@ package main
 import (
 	"chantools"
 	"rtlib"
-	"unsafe"
 )
 
 func main() {
@@ -12,8 +11,7 @@ func main() {
 	c <- 1
 	c <- 2
 	c <- 3
-	ptr := unsafe.Pointer(&c)
-	chantools.ChanDebug(ptr)
+	chantools.ChanDebug(c)
 }
 
 /*

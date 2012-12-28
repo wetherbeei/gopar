@@ -35,11 +35,9 @@ struct  Hchan
 };
 #define chanbuf(c, i) ((byte*)((c)+1)+(uintptr)(c)->elemsize*(i))
 
-void ·ChanDebug(ChanType *t, Hchan** cc) {
-
-  Hchan* c = *cc;
-  //runtime·lock(c);
-  runtime·printf("Type: %p, ChanPtr: %p\n", t, c);
+void ·ChanDebug(uint32 t, Hchan* c) {
+  runtime·lock(c);
+  runtime·printf("Type: %x, ChanPtr: %p\n", t, c);
   runtime·printf("QSize:%d, Elem:%d\n", c->dataqsiz, c->elemsize);
   runtime·printf("Value count: %d\n", c->qcount);
   if (c->dataqsiz < 1) {
@@ -47,28 +45,33 @@ void ·ChanDebug(ChanType *t, Hchan** cc) {
     return;
   }
   runtime·printf("Peeking at [recv:%d send:%d %d/%d]\n", c->recvx, c->sendx, c->qcount, c->dataqsiz);
-  //runtime·unlock(c);
+  runtime·unlock(c);
 }
 
 // Main batching function
 // Read up to minnum values from the channel into a new array
-void ·ChanRead(Hchan** cc, uint32 minnum, Slice* ret) {
-  Hchan* c = *cc;
+void ·ChanRead(uint32 t, Hchan* c, uint32 minnum, byte* ret, uint32 len) {
   runtime·lock(c);
+  runtime·printf("%d <= %d?\n", minnum, c->qcount);
+  len = c->qcount;
+  FLUSH(&len);
   if (c->qcount < minnum) {
     ret = nil;
     FLUSH(&ret);
+    runtime·unlock(c);
     return;
   }
-  byte* newdata = runtime·mal(c->elemsize * c->qcount);
-  runtime·printf("ChanPtr: %p\n", c);
+  ret = (byte*) runtime·mal(c->elemsize * c->qcount);
+  FLUSH(&ret);
+  runtime·printf("ChanPtr: %p, %x\n", c, t);
   runtime·printf("QSize:%d, Elem:%d\n", c->dataqsiz, c->elemsize);
   runtime·printf("Value count: %d\n", c->qcount);
   if (c->dataqsiz < 1) {
     runtime·printf("Cannot peek on an unbuffered channel\n");
+    runtime·unlock(c);
     return;
   }
-  c->elemalg->copy(c->elemsize, newdata, chanbuf(c, c->recvx));
-  runtime·printf("Peeking at [recv:%d send:%d %d/%d]\n", c->recvx, c->sendx, c->qcount, c->dataqsiz);
+  c->elemalg->copy(c->elemsize, (ret + 0), chanbuf(c, c->recvx));
+  runtime·printf("Reading [recv:%d send:%d %d/%d]\n", c->recvx, c->sendx, c->qcount, c->dataqsiz);
   runtime·unlock(c);
 }
