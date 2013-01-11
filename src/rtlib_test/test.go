@@ -14,7 +14,6 @@ func main() {
 	chantools.ChanDebug(c)
 }
 
-/*
 func translatedKernel() {
 	done := make(chan int)
 	a := make([]int, 1000000)
@@ -23,16 +22,17 @@ func translatedKernel() {
 	}
 
 	go func() {
+		// Get device
+		GPU := rtlib.GetAccelerator()
 		// Transfer copies of local vars
-		aGPU := rtlib.MirrorGPU(a)
+		aG := GPU.MirrorGPU(a)
 		// Launch kernel
-		result := rtlib.Kernel["reduce"].Launch(aGPU)
+		result := rtlib.Kernel["reduce"].Launch(aG)
 		result.Wait()
 		// Copy back modified vars
-		aGPU.CopyBack()
+		aG.CopyBack()
 		done <- 1
 	}()
 
 	<-done
 }
-*/

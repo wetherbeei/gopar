@@ -5,6 +5,11 @@ import (
 	"github.com/tones111/go-opencl/cl"
 )
 
+// Buffers can be single values, 
+type GPUBuffer struct {
+  goptr, gpuptr uintptr
+  length 
+}
 func PrintDebug() {
 	for _, platform := range cl.Platforms {
 		fmt.Println("  Platform Profile:", platform.Property(cl.PLATFORM_PROFILE))

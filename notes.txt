@@ -7,6 +7,26 @@ generation. Finally, the tool invokes 'go' with the same arguments, but modifies
 the GOPATH env variable to include the auto-generated files, as well as include
 the gopar directory that contains the parallel runtime library.
 
+Steps:
+  - $ gopar [run|build|install] <main package>
+  - Build function calls starting from main()
+    - Determine call graph, and identify possible parallelism points
+      - Tag non-parallelizable library calls
+    - Record the work factor increase for loops to later calculate the number
+        of threads to launch.
+    - Deal with recursion
+  - Pick the cutoff loop for parallelizing along each branch in the call graph
+    - Analyze each loop as being independent, or recognize reductions and shared
+        variables.
+  - For each loop picked to be parallelized, copy all of the files in that
+      package to the temporary directory
+  - For each loop to be parallelized:
+    - Modify the surrounding AST to correctly marshall data to/from OpenCL
+    - Generate the OpenCL kernel
+    - Include the call to the OpenCL kernel
+  - Launch the underlying 'go' program with modified GOPATH env
+    - <path to src/rtlib>:<path to generated src/>:<original path>
+
 Go-to-C translation:
 - Simple support, no interfaces/typecasting/etc
 - Support for ordered channel writes within kernels (prefix sum prerun for idx)

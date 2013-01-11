@@ -3,37 +3,43 @@ package main
 import (
 	"flag"
 	"fmt"
-	//"go/build"
 	"go/ast"
-	"go/parser"
-	"go/token"
+	"io/ioutil"
+	"os"
 )
 
 func main() {
 	flag.Parse()
 	compilepkg := flag.Arg(0)
 	fmt.Println("GoPar Compiler")
-	// Examine source code packages. Start with the default package or a given one
-	// then transform it and examine its includes as well.
-	/*
-		pkg, err := build.Default.Import(compilepkg, ".", 0)
-		if err != nil {
-			panic(err)
-		}
-		for _, gofile := range pkg.GoFiles {
-			fmt.Println(gofile)
-		}*/
-	fset := token.NewFileSet()
-	pkgmap, _ := parser.ParseDir(fset, compilepkg, nil, 0)
-	for _, pkg := range pkgmap {
-		for _, file := range pkg.Files {
-			//fmt.Println(file)
-			ast.Print(fset, file)
-		}
-		//funcs := FindParallelFuncs(pkg)
-
+	dir, err := ioutil.TempDir(os.TempDir(), "gopar_")
+	if err != nil {
+		panic(err)
 	}
-	// Create temporary source directories
+	fmt.Println(dir)
+	defer os.RemoveAll(dir)
 
-	// Launch 'go' with GOPATH edited with new directories
+	project := NewProject()
+	err = project.load(compilepkg)
+
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(project)
+	mainPkg := project.get("main")
+	if mainPkg == nil {
+		panic(fmt.Errorf("%s is not a main package", compilepkg))
+	}
+	ast.Print(project.fset, mainPkg.file)
+
+	//callGraph := buildCallGraph()
+	//parallelLoops := pickParallelLoops(callGraph)
+	//for loop, _ := range parallelLoops {
+	// Copy package if not already copied
+
+	// Generate OpenCL kernel, store in string
+
+	// Modify loop AST to copy data and call the OpenCL kernel
+	//}
 }
