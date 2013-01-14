@@ -27,6 +27,25 @@ Steps:
   - Launch the underlying 'go' program with modified GOPATH env
     - <path to src/rtlib>:<path to generated src/>:<original path>
 
+Call graph generation:
+
+func main() {
+  var a []int
+  var b []int
+
+  for i, val := range a {
+    b[i] = a * 100
+  }
+
+  sum := 0
+  for i, val := range b {
+    if i != 0 {
+      b[i] += b[i-1] // prefix sum
+    }
+    sum = sum + val // reduction
+  }
+}
+
 Go-to-C translation:
 - Simple support, no interfaces/typecasting/etc
 - Support for ordered channel writes within kernels (prefix sum prerun for idx)
