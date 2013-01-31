@@ -9,6 +9,22 @@ the gopar directory that contains the parallel runtime library.
 
 Steps:
   - $ gopar [run|build|install] <main package>
+  - LLVM-inspired structure
+    - Analysis passes
+      - Module passes
+        - Gather identifiers
+      - Function passes
+        - Calculate function complexity
+      - Loop passes
+        - Calculate branching factor
+        - Calculate loop complexity
+      - Block passes
+        - Dependency analysis
+        - Block use-modify list
+    - Transform passes (declare dependencies on Analysis)
+      - Loop splitting
+        - Any variables set during the last loop iteration need to be visible
+
   - Build function calls starting from main()
     - Determine call graph, and identify possible parallelism points
       - Tag non-parallelizable library calls
@@ -26,6 +42,35 @@ Steps:
     - Include the call to the OpenCL kernel
   - Launch the underlying 'go' program with modified GOPATH env
     - <path to src/rtlib>:<path to generated src/>:<original path>
+
+Loop dependencies: "PLDI'12 Logical Inference Techniques for Loop Parallelization"
+- "array abstraction"
+- "uniform set representation"
+  - summarize variables as read-only, write-first, read-write
+    - or WAR, WAW, RAW?
+  - build DAGs
+- privatization + loop splitting (record last iteration of loop)
+- recording loop bounds in an algebraic equation
+
+Compiler Passes:
+- Analysis
+  - ExternalFunction: determine if a function contains any references to 
+      external package functions/variables. TODO: resolve them if possible.
+  - DataDependence: This is the most complicated - analyze the data
+      dependencies between "basic blocks" (for loops + functions).
+  - CalculateLoopIterations: record an equation for the number of threads to be
+      launched
+  - PickParallelLoops: use previous analysis to identify loops that can and
+      should be parallelized.
+  - CalculateLoopCutoff: generate an expression O(<vars>) < const condition for
+      choosing at runtime to run the parallel function or not
+  - GenerateSupportingFunctions: generate the C kernel source for all functions
+      marked as used in a parallel kernel [PickParallelLoops]
+- Transform
+  - //UnrollLoops: use the CalculateLoopCost to figure out 
+  - RuntimeLibImport: add the 'import "goparruntime"' line
+  - RewriteLoops: rewrite the main loop site with data transfer calls and kernel
+    invocation.
 
 Call graph generation:
 

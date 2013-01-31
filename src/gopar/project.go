@@ -27,6 +27,16 @@ func (p *Package) Lookup(name string) *ast.Object {
 	return nil
 }
 
+func (p *Package) TopLevel() map[string]*ast.Object {
+	m := make(map[string]*ast.Object)
+	for _, scope := range p.scopes {
+		for name, obj := range scope.Objects {
+			m[name] = obj
+		}
+	}
+	return m
+}
+
 type Project struct {
 	name     string
 	fset     *token.FileSet
@@ -95,6 +105,7 @@ func (p *Project) write(dir string) (err error) {
 		}
 		fmt.Println("Writing", f.Name())
 		outputConfig.Fprint(f, p.fset, pkg.file)
+		f.Close()
 	}
 	return
 }

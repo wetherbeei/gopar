@@ -35,10 +35,14 @@ func main() {
 	if mainPkg == nil {
 		panic(fmt.Errorf("%s is not a main package", compilepkg))
 	}
-	//ast.Print(project.fset, mainPkg.file)
 
-	buildCallGraph(project)
-	//parallelLoops := pickParallelLoops(callGraph)
+	compiler := NewCompiler(project)
+	compiler.AddPass(NewExternalFunctionPass())
+	compiler.AddPass(NewDependencyPass())
+	err = compiler.Run()
+
+	//buildCallGraph(project)
+	//parallelLoops := pickParallelLoops(graph)
 	//for loop, _ := range parallelLoops {
 	// Copy package if not already copied
 
