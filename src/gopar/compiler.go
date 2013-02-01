@@ -139,7 +139,7 @@ func (c *Compiler) Run() (err error) {
 		}
 		var allDone bool = true
 		for t, done := range c.passStatus {
-			fmt.Printf("Status %T = %b\n", c.passes[t], done)
+			fmt.Printf("Status %T = %t\n", c.passes[t], done)
 			allDone = allDone && done
 		}
 		if allDone {

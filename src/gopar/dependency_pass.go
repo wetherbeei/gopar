@@ -60,7 +60,7 @@ func (v DependencyPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		v.Print("done", reflect.TypeOf(v.node))
 		return v
 	}
-	v.Print("start", reflect.TypeOf(v.node))
+	v.Print("start", reflect.TypeOf(v.node), v.node)
 	// Return a new visitor for new BasicBlocks, else return the current visitor
 	switch t := node.(type) {
 	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl:
@@ -69,12 +69,19 @@ func (v DependencyPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		block.children = append(block.children, newBlock)
 		v.cur = newBlock
 	case *ast.CallExpr:
+
 		// tag this node with a reference to the surrounding BasicBlock so we can
 		// fill in additional reads/writes once we resolve all functions
 		v.Print("+ tagged for later pass")
 		v.pass.SetResult(node, block)
 	}
 
+	// Analyze all AST nodes for reads, writes and defines
+	switch t := node.(type) {
+	case *ast.AssignStmt:
+		v.Print("- Writes", t.Lhs)
+		v.Print("- Reads", t.Rhs)
+	}
 	return v
 }
 

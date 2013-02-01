@@ -3,7 +3,8 @@ package main
 import "fmt"
 
 func operate(idx int, a []int, b []int) {
-	b[idx] = 100 * a[idx]
+	answer := 100 * a[idx]
+	b[idx] = answer
 }
 
 type DataB struct {

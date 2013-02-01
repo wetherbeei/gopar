@@ -47,8 +47,9 @@ func (pass *ExternalFunctionPass) RunFunctionPass(node ast.Node, c *Compiler) (m
 			case *ast.CallExpr:
 				switch f := t.Fun.(type) {
 				case *ast.FuncLit:
-					// Allow anonymous functions??
+					// TODO: Allow anonymous functions??
 					fmt.Println("Anonymous function")
+					external = append(external, "<anonymous>")
 				case *ast.Ident:
 					// Check if the function is builtin, or defined in the package
 					var name string = f.Name
