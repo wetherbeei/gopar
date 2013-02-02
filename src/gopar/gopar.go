@@ -37,19 +37,11 @@ func main() {
 	}
 
 	compiler := NewCompiler(project)
-	compiler.AddPass(NewExternalFunctionPass())
+	compiler.AddPass(NewDefinedTypesPass())
+	compiler.AddPass(NewBasicBlockPass())
 	compiler.AddPass(NewDependencyPass())
 	err = compiler.Run()
 
-	//buildCallGraph(project)
-	//parallelLoops := pickParallelLoops(graph)
-	//for loop, _ := range parallelLoops {
-	// Copy package if not already copied
-
-	// Generate OpenCL kernel, store in string
-
-	// Modify loop AST to copy data and call the OpenCL kernel
-	//}
 	err = project.write(dir)
 	if err != nil {
 		panic(err)

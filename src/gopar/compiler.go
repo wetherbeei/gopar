@@ -9,21 +9,24 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"strings"
 )
 
 type PassMode uint
 
 const (
-	ModulePass PassMode = iota
-	FunctionPass
+	ModulePassMode PassMode = iota
+	FunctionPassMode
+	BasicBlockPassMode
 )
 
 // All of the available passes
 type PassType uint
 
 const (
-	ExternalFunctionPassType PassType = iota
+	BasicBlockPassType PassType = iota
 	DependencyPassType
+	DefinedTypesPassType
 )
 
 type Pass interface {
@@ -35,8 +38,9 @@ type Pass interface {
 
 	// Run is executed by the Compiler, and should return true if the AST node was
 	// modified.
-	RunModulePass(ast.Node, *Compiler) (bool, error)
-	RunFunctionPass(ast.Node, *Compiler) (bool, error)
+	RunModulePass(*ast.File, *Compiler) (bool, error)
+	RunFunctionPass(*ast.FuncDecl, *Compiler) (bool, error)
+	RunBasicBlockPass(*BasicBlock, *Compiler) (bool, error)
 
 	// Defined by BasePass
 	GetResult(ast.Node) interface{}
@@ -64,15 +68,16 @@ func (pass *BasePass) Reset() {
 	pass.analysis = make(map[ast.Node]interface{})
 }
 
-func (pass *BasePass) RunModulePass(node ast.Node, c *Compiler) (bool, error) {
+func (pass *BasePass) RunModulePass(file *ast.File, c *Compiler) (bool, error) {
 	return false, fmt.Errorf("Undefined pass")
 }
 
-func (pass *BasePass) RunFunctionPass(node ast.Node, c *Compiler) (bool, error) {
+func (pass *BasePass) RunFunctionPass(function *ast.FuncDecl, c *Compiler) (bool, error) {
 	return false, fmt.Errorf("Undefined pass")
 }
 
-func (pass *BasePass) RunLoopPass(node ast.Node, c *Compiler) (bool, error) {
+// Run through each basic block in depth-first order
+func (pass *BasePass) RunBasicBlockPass(b *BasicBlock, c *Compiler) (bool, error) {
 	return false, fmt.Errorf("Undefined pass")
 }
 
@@ -119,6 +124,7 @@ func (c *Compiler) Run() (err error) {
 				canRun = canRun && c.passStatus[dep]
 			}
 			if canRun {
+				fmt.Println(strings.Repeat("-", 80))
 				fmt.Printf("Running %T\n", c.passes[t])
 				var modified bool
 				modified, err = c.RunPass(c.passes[t])
@@ -149,17 +155,46 @@ func (c *Compiler) Run() (err error) {
 	return
 }
 
+func RunBasicBlockRecursively(pass Pass, root *BasicBlock, c *Compiler) (modified bool, err error) {
+	modified, err = pass.RunBasicBlockPass(root, c)
+	if err != nil {
+		return
+	}
+	for _, child := range root.children {
+		var mod bool
+		mod, err = RunBasicBlockRecursively(pass, child, c)
+		if err != nil {
+			return
+		}
+		modified = modified || mod
+	}
+	return
+}
+
 func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 	// TODO: only does main package so far
+	pkg := c.project.get("main")
 	switch pass.GetPassMode() {
-	case ModulePass:
-		return pass.RunModulePass(c.project.get("main").file, c)
-	case FunctionPass:
-		pkg := c.project.get("main")
+	case ModulePassMode:
+		return pass.RunModulePass(pkg.file, c)
+	case FunctionPassMode:
+		for _, obj := range pkg.TopLevel() {
+			if obj.Kind == ast.Fun {
+				fmt.Println("Running FunctionPass", obj.Decl.(*ast.FuncDecl).Name)
+				var passMod bool
+				passMod, err = pass.RunFunctionPass(obj.Decl.(*ast.FuncDecl), c)
+				modified = modified || passMod
+				if err != nil {
+					return
+				}
+			}
+		}
+	case BasicBlockPassMode:
 		for _, obj := range pkg.TopLevel() {
 			if obj.Kind == ast.Fun {
 				var passMod bool
-				passMod, err = pass.RunFunctionPass(obj.Decl.(*ast.FuncDecl), c)
+				b := c.GetPassResult(BasicBlockPassType, obj.Decl.(*ast.FuncDecl)).(*BasicBlock)
+				passMod, err = RunBasicBlockRecursively(pass, b, c)
 				modified = modified || passMod
 				if err != nil {
 					return

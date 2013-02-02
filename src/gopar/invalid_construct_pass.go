@@ -1,46 +1,20 @@
+// Invalid constructs pass
+//
+// 
 package main
 
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 )
 
-// External function analysis pass
-//
-// Examine the function for any external function calls and record a list of
-// them.
-
-// TODO: These functions have a corresponding GPU implementation
-var builtinTranslated map[string]bool = map[string]bool{
-// Detect constant make lengths and privatize an array
-// "make": bool
-}
-
-type ExternalFunctionPass struct {
+type InvalidConstructPass struct {
 	BasePass
 }
 
-func NewExternalFunctionPass() *ExternalFunctionPass {
-	return &ExternalFunctionPass{
-		BasePass: NewBasePass(),
-	}
-}
-
-func (pass *ExternalFunctionPass) GetPassType() PassType {
-	return ExternalFunctionPassType
-}
-
-func (pass *ExternalFunctionPass) GetPassMode() PassMode {
-	return FunctionPass
-}
-
-func (pass *ExternalFunctionPass) GetDependencies() []PassType {
-	return []PassType{}
-}
-
-func (pass *ExternalFunctionPass) RunFunctionPass(node ast.Node, c *Compiler) (modified bool, err error) {
+func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, c *Compiler) (modified bool, err error) {
 	var external []string
-	fmt.Println("Inspecting function", node.(*ast.FuncDecl).Name)
 	ast.Inspect(node, func(node ast.Node) bool {
 		if node != nil {
 			switch t := node.(type) {
@@ -62,6 +36,23 @@ func (pass *ExternalFunctionPass) RunFunctionPass(node ast.Node, c *Compiler) (m
 						fmt.Println("Found supporting function", name)
 					}
 				}
+			case *ast.FuncDecl:
+				fmt.Println("Embedded function", t.Name)
+				external = append(external, t.Name.String())
+			case *ast.SwitchStmt:
+				fmt.Println("Switch stmt")
+				external = append(external, "switch stmt")
+			case *ast.GoStmt:
+				fmt.Println("Go stmt")
+				external = append(external, "go stmt")
+			case *ast.BranchStmt:
+				if t.Tok == token.GOTO {
+					fmt.Println("Goto stmt")
+					external = append(external, "goto stmt")
+				}
+			case *ast.DeferStmt:
+				fmt.Println("Defer stmt")
+				external = append(external, "defer stmt")
 			}
 			return true
 		}
