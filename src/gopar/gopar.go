@@ -39,7 +39,7 @@ func main() {
 	compiler := NewCompiler(project)
 	compiler.AddPass(NewDefinedTypesPass())
 	compiler.AddPass(NewBasicBlockPass())
-	compiler.AddPass(NewDependencyPass())
+	//compiler.AddPass(NewDependencyPass())
 	err = compiler.Run()
 
 	err = project.write(dir)
