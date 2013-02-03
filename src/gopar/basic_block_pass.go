@@ -7,7 +7,6 @@ package main
 import (
 	"fmt"
 	"go/ast"
-	"reflect"
 	"strings"
 )
 
@@ -17,7 +16,7 @@ var builtinTranslated map[string]bool = map[string]bool{
 // "make": bool
 }
 
-// A basic block represents a Go scope (function, for, range, if, switch).
+// A basic block represents a Go scope (function, for, range, if, switch, block)
 type BasicBlock struct {
 	depth    int
 	node     ast.Node
@@ -56,6 +55,11 @@ func (b BasicBlock) Print(args ...interface{}) {
 	fmt.Println(args...)
 }
 
+func (b BasicBlock) Printf(f string, args ...interface{}) {
+	formatted := fmt.Sprintf(f, args...)
+	fmt.Println(strings.Repeat("  ", b.depth), formatted)
+}
+
 type BasicBlockPass struct {
 	BasePass
 }
@@ -70,13 +74,11 @@ func (v BasicBlockPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	block := v.cur
 	if node == nil {
 		// post-order actions (all sub-nodes have been visited)
-		block.Print("done", reflect.TypeOf(node))
 		return v
 	}
-	block.Print("start", reflect.TypeOf(node), node)
 	switch t := node.(type) {
-	case *ast.FuncLit, *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl:
-		block.Print("+ new block", t)
+	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl, *ast.IfStmt, *ast.BlockStmt:
+		block.Printf("+ new block: %T %v", t, t)
 		newBlock := NewBasicBlock(node, block)
 		v.cur = newBlock
 		v.pass.SetResult(t, newBlock)
