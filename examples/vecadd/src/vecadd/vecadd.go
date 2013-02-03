@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-func operate(idx int, a []int, b []int) {
+func operate(idx int, a []int, b []int) (outcome bool) {
 	answer := 100 * a[idx]
 	b[idx] = answer
 	if a := b[idx]; a > 0 {
@@ -12,6 +12,7 @@ func operate(idx int, a []int, b []int) {
 	} else {
 		b[idx] -= 1
 	}
+	return
 }
 
 type DataB struct {

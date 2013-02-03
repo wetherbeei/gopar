@@ -125,7 +125,7 @@ func (c *Compiler) Run() (err error) {
 			}
 			if canRun {
 				fmt.Println(strings.Repeat("-", 80))
-				fmt.Printf("Running %T\n", c.passes[t])
+				fmt.Printf("\x1b[32;1mRunning %T\x1b[0m\n", c.passes[t])
 				var modified bool
 				modified, err = c.RunPass(c.passes[t])
 				if err != nil {
@@ -180,7 +180,7 @@ func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 	case FunctionPassMode:
 		for _, obj := range pkg.TopLevel() {
 			if obj.Kind == ast.Fun {
-				fmt.Println("Running FunctionPass", obj.Decl.(*ast.FuncDecl).Name)
+				fmt.Println("\x1b[32;1mFunctionPass\x1b[0m", obj.Decl.(*ast.FuncDecl).Name)
 				var passMod bool
 				passMod, err = pass.RunFunctionPass(obj.Decl.(*ast.FuncDecl), c)
 				modified = modified || passMod
@@ -193,6 +193,7 @@ func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 		for _, obj := range pkg.TopLevel() {
 			if obj.Kind == ast.Fun {
 				var passMod bool
+				fmt.Println("\x1b[32;1mBasicBlockPass\x1b[0m", obj.Decl.(*ast.FuncDecl).Name)
 				b := c.GetPassResult(BasicBlockPassType, obj.Decl.(*ast.FuncDecl)).(*BasicBlock)
 				passMod, err = RunBasicBlockRecursively(pass, b, c)
 				modified = modified || passMod

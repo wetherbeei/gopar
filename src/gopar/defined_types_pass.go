@@ -11,8 +11,8 @@ import (
 
 type DefinedType struct {
 	ident string
-	// Link to ast.Node for type definition, nil if builtin
-	decl interface{}
+	// Link to type definition, nil if builtin
+	decl ast.Node
 }
 
 type DefinedTypesData struct {
