@@ -37,8 +37,25 @@ func main() {
 		// Kernel copy back
 		done <- 1
 	}()
-	<-done // b should be done by this point
+	var z int
+	z = <-done // b should be done by this pointUntitled document
+	z++
+	z += 1
+	for i, val := range a {
+		fmt.Println(i, val)
+		break
+	}
+	for i := 0; i < len(a); i++ {
+		fmt.Println(i)
+		break
+	}
 	var x DataA
-	fmt.Println(x.b.c)
+	fmt.Println(x.b.c, z)
+
+	// write-first trigger
+	var y = 1
+	for i := 1; i < 5; i++ {
+		y += 1
+	}
 	fmt.Println("done")
 }
