@@ -13,6 +13,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"reflect"
@@ -132,6 +133,19 @@ func (v DependencyPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 			for _, funcArg := range e.Args {
 				AccessExpr(funcArg, ReadAccess)
 			}
+		case *ast.IndexExpr:
+			// TODO: more granular - treat each index as unique
+			AccessExpr(e.X, t)
+			AccessExpr(e.Index, ReadAccess)
+		case *ast.SelectorExpr:
+			// x.y.z expressions
+			// TODO: more granular level of read controls
+			// TODO: what about x.y[a]? wouldn't pick up read to [a]
+			AccessExpr(e.X, t)
+		case *ast.BasicLit:
+			// ignore, builtin constant
+		default:
+			fmt.Printf("Unknown access expression %T\n", expr)
 		}
 	}
 
