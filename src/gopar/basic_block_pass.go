@@ -84,12 +84,11 @@ func (v BasicBlockPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		// post-order actions (all sub-nodes have been visited)
 		return v
 	}
-	switch node {
-	case isBasicBlockNode(t):
-		block.Printf("+ new block: %T %v", t, t)
+	if isBasicBlockNode(node) {
+		block.Printf("+ new block: %T %v", node, node)
 		newBlock := NewBasicBlock(node, block)
 		v.cur = newBlock
-		v.pass.SetResult(t, newBlock)
+		v.pass.SetResult(node, newBlock)
 	}
 	return v
 }

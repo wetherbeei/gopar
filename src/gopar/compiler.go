@@ -77,7 +77,7 @@ func (pass *BasePass) RunFunctionPass(function *ast.FuncDecl, c *Compiler) (bool
 }
 
 type BasicBlockVisitor interface {
-	ast.Visitor
+	Visit(ast.Node) BasicBlockVisitor
 
 	// Called when the visit to this BasicBlock is done. Return true if the AST
 	// was modified.
@@ -85,6 +85,10 @@ type BasicBlockVisitor interface {
 }
 
 type DefaultBasicBlockVisitor struct {
+}
+
+func (d DefaultBasicBlockVisitor) Visit(node ast.Node) BasicBlockVisitor {
+	return nil
 }
 
 func (d DefaultBasicBlockVisitor) Done(b *BasicBlock) (bool, error) {
@@ -176,33 +180,36 @@ type BasicBlockVisitorImpl struct {
 	pass        Pass
 	c           *Compiler
 	block       *BasicBlock
-	passVisitor ast.Visitor
+	passVisitor BasicBlockVisitor
 	modified    bool
 	err         error
 }
 
-func (b *BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
-	switch node {
-	case isBasicBlockNode(node):
+func (b BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
+	switch {
+	case isBasicBlockNode(node) && node != b.block.node:
 		basicBlock := b.c.GetPassResult(BasicBlockPassType, node).(*BasicBlock)
 		var modified bool
 		modified, b.err = RunBasicBlock(b.pass, basicBlock, b.c)
 		b.modified = b.modified || modified
 		return nil // already traversed
-	default:
+	case b.passVisitor != nil:
 		if b.err != nil {
 			return nil
 		}
-		return b.passVisitor.Visit(node)
+		b.passVisitor = b.passVisitor.Visit(node)
+		return b
 	}
 	return nil
 }
 
 func RunBasicBlock(pass Pass, root *BasicBlock, c *Compiler) (modified bool, err error) {
+	root.Printf("\x1b[32;1mBasicBlockPass\x1b[0m %T %+v", root.node, root.node)
 	passVisitor := pass.RunBasicBlockPass(root, c)
 	n := BasicBlockVisitorImpl{pass: pass, c: c, block: root, passVisitor: passVisitor}
 	ast.Walk(n, root.node)
-	e := passVisitor.Done()
+	mod, e := passVisitor.Done(root)
+	n.modified = n.modified || mod
 	if n.err == nil {
 		n.err = e
 	}
@@ -231,7 +238,6 @@ func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 		for _, obj := range pkg.TopLevel() {
 			if obj.Kind == ast.Fun {
 				var passMod bool
-				fmt.Println("\x1b[32;1mBasicBlockPass\x1b[0m", obj.Decl.(*ast.FuncDecl).Name)
 				b := c.GetPassResult(BasicBlockPassType, obj.Decl.(*ast.FuncDecl)).(*BasicBlock)
 				passMod, err = RunBasicBlock(pass, b, c)
 				modified = modified || passMod

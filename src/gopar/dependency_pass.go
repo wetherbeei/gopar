@@ -71,7 +71,22 @@ type DependencyPassVisitor struct {
 	c         *Compiler
 }
 
-func (v DependencyPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
+func (v DependencyPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
+	dataBlock := v.dataBlock
+
+	block.Print("== Defines ==")
+	for ident, expr := range dataBlock.defines {
+		block.Printf("%s = %+v", ident, expr)
+	}
+	block.Print("== Accesses ==")
+	for ident, t := range dataBlock.accesses {
+		block.Printf("%s = %s", ident, dependencyTypeString[t])
+	}
+	MergeDependenciesUpwards(block)
+	return
+}
+
+func (v DependencyPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 	// Get the closest enclosing basic block for this node
 	dataBlock := v.dataBlock
 	b := v.cur
@@ -225,6 +240,7 @@ func (v DependencyPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 			AccessExpr(expr, ReadAccess)
 		}
 		for _, expr := range t.Lhs {
+			b.Printf("write %T %+v", expr, expr)
 			AccessExpr(expr, WriteAccess)
 		}
 		return nil // don't go down these branches
@@ -274,21 +290,8 @@ func MergeDependenciesUpwards(child *BasicBlock) {
 	// TODO: merge reads/writes of identifiers outside this scope
 }
 
-func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) (modified bool, err error) {
+func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) BasicBlockVisitor {
 	dataBlock := NewDependencyPassData()
 	block.Set(DependencyPassType, dataBlock)
-	v := DependencyPassVisitor{cur: block, dataBlock: dataBlock, c: c, pass: pass}
-	return v
-	ast.Walk(v, block.node)
-
-	block.Print("== Defines ==")
-	for ident, expr := range dataBlock.defines {
-		block.Printf("%s = %+v", ident, expr)
-	}
-	block.Print("== Accesses ==")
-	for ident, t := range dataBlock.accesses {
-		block.Printf("%s = %s", ident, dependencyTypeString[t])
-	}
-	MergeDependenciesUpwards(block)
-	return
+	return DependencyPassVisitor{cur: block, dataBlock: dataBlock, c: c, pass: pass}
 }
