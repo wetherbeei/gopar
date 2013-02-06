@@ -40,7 +40,7 @@ type Pass interface {
 	// modified.
 	RunModulePass(*ast.File, *Compiler) (bool, error)
 	RunFunctionPass(*ast.FuncDecl, *Compiler) (bool, error)
-	RunBasicBlockPass(*BasicBlock, *Compiler) (bool, error)
+	RunBasicBlockPass(*BasicBlock, *Compiler) BasicBlockVisitor
 
 	// Defined by BasePass
 	GetResult(ast.Node) interface{}
@@ -76,9 +76,26 @@ func (pass *BasePass) RunFunctionPass(function *ast.FuncDecl, c *Compiler) (bool
 	return false, fmt.Errorf("Undefined pass")
 }
 
-// Run through each basic block in depth-first order
-func (pass *BasePass) RunBasicBlockPass(b *BasicBlock, c *Compiler) (bool, error) {
+type BasicBlockVisitor interface {
+	ast.Visitor
+
+	// Called when the visit to this BasicBlock is done. Return true if the AST
+	// was modified.
+	Done(*BasicBlock) (bool, error)
+}
+
+type DefaultBasicBlockVisitor struct {
+}
+
+func (d DefaultBasicBlockVisitor) Done(b *BasicBlock) (bool, error) {
 	return false, fmt.Errorf("Undefined pass")
+}
+
+// Run through each basic block in depth-first order. When a new basic block is
+// encountered, call RunBasicBlockPass on it, then return to executing the 
+// current pass.
+func (pass *BasePass) RunBasicBlockPass(b *BasicBlock, c *Compiler) BasicBlockVisitor {
+	return DefaultBasicBlockVisitor{}
 }
 
 type Compiler struct {
@@ -155,20 +172,41 @@ func (c *Compiler) Run() (err error) {
 	return
 }
 
-func RunBasicBlockRecursively(pass Pass, root *BasicBlock, c *Compiler) (modified bool, err error) {
-	modified, err = pass.RunBasicBlockPass(root, c)
-	if err != nil {
-		return
-	}
-	for _, child := range root.children {
-		var mod bool
-		mod, err = RunBasicBlockRecursively(pass, child, c)
-		if err != nil {
-			return
+type BasicBlockVisitorImpl struct {
+	pass        Pass
+	c           *Compiler
+	block       *BasicBlock
+	passVisitor ast.Visitor
+	modified    bool
+	err         error
+}
+
+func (b *BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
+	switch node {
+	case isBasicBlockNode(node):
+		basicBlock := b.c.GetPassResult(BasicBlockPassType, node).(*BasicBlock)
+		var modified bool
+		modified, b.err = RunBasicBlock(b.pass, basicBlock, b.c)
+		b.modified = b.modified || modified
+		return nil // already traversed
+	default:
+		if b.err != nil {
+			return nil
 		}
-		modified = modified || mod
+		return b.passVisitor.Visit(node)
 	}
-	return
+	return nil
+}
+
+func RunBasicBlock(pass Pass, root *BasicBlock, c *Compiler) (modified bool, err error) {
+	passVisitor := pass.RunBasicBlockPass(root, c)
+	n := BasicBlockVisitorImpl{pass: pass, c: c, block: root, passVisitor: passVisitor}
+	ast.Walk(n, root.node)
+	e := passVisitor.Done()
+	if n.err == nil {
+		n.err = e
+	}
+	return n.modified, n.err
 }
 
 func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
@@ -195,7 +233,7 @@ func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 				var passMod bool
 				fmt.Println("\x1b[32;1mBasicBlockPass\x1b[0m", obj.Decl.(*ast.FuncDecl).Name)
 				b := c.GetPassResult(BasicBlockPassType, obj.Decl.(*ast.FuncDecl)).(*BasicBlock)
-				passMod, err = RunBasicBlockRecursively(pass, b, c)
+				passMod, err = RunBasicBlock(pass, b, c)
 				modified = modified || passMod
 				if err != nil {
 					return

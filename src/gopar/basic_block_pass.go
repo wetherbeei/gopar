@@ -16,6 +16,14 @@ var builtinTranslated map[string]bool = map[string]bool{
 // "make": bool
 }
 
+func isBasicBlockNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl, *ast.IfStmt, *ast.BlockStmt:
+		return true
+	}
+	return false
+}
+
 // A basic block represents a Go scope (function, for, range, if, switch, block)
 type BasicBlock struct {
 	depth    int
@@ -76,8 +84,8 @@ func (v BasicBlockPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		// post-order actions (all sub-nodes have been visited)
 		return v
 	}
-	switch t := node.(type) {
-	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl, *ast.IfStmt, *ast.BlockStmt:
+	switch node {
+	case isBasicBlockNode(t):
 		block.Printf("+ new block: %T %v", t, t)
 		newBlock := NewBasicBlock(node, block)
 		v.cur = newBlock

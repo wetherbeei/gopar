@@ -57,11 +57,17 @@ Compiler Passes:
   - ExternalFunction: determine if a function contains any references to 
       external package functions/variables. TODO: resolve them if possible.
   - DataDependence: This is the most complicated - analyze the data
-      dependencies between "basic blocks" (for loops + functions).
-  - CalculateLoopIterations: record an equation for the number of threads to be
-      launched
+      dependencies between "basic blocks" (for loops + functions). Record the
+      variables created, and classify each variable as ReadOnly, WriteFirst, or
+      ReadWrite.
+  - CalculateLoopIterations: record an expression for the number of iterations
+      a loop makes, or if it cannot be determined (while() loop, writes to the
+      iteration variable, etc) [DataDependence]
   - PickParallelLoops: use previous analysis to identify loops that can and
-      should be parallelized.
+      should be parallelized. Record the expressions used for indexing, and the
+      thread space. Also record the variables that need to be transferred, and
+      any variables that can be marked as private. [CalculateLoopIterations, 
+      DataDependence]
   - CalculateLoopCutoff: generate an expression O(<vars>) < const condition for
       choosing at runtime to run the parallel function or not
   - GenerateSupportingFunctions: generate the C kernel source for all functions
@@ -69,8 +75,8 @@ Compiler Passes:
 - Transform
   - //UnrollLoops: use the CalculateLoopCost to figure out 
   - RuntimeLibImport: add the 'import "goparruntime"' line
-  - RewriteLoops: rewrite the main loop site with data transfer calls and kernel
-    invocation.
+  - RewriteLoops: rewrite the loop site with data transfer calls and kernel 
+      invocation.
 
 Call graph generation:
 

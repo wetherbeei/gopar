@@ -38,7 +38,7 @@ func main() {
 		done <- 1
 	}()
 	var z int
-	z = <-done // b should be done by this pointUntitled document
+	z = <-done
 	z++
 	z += 1
 	for i, val := range a {
@@ -55,6 +55,7 @@ func main() {
 	// write-first trigger
 	var y = 1
 	for i := 1; i < 5; i++ {
+		// read-write trigger
 		y += 1
 	}
 	fmt.Println("done")

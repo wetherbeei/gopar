@@ -278,6 +278,7 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) (m
 	dataBlock := NewDependencyPassData()
 	block.Set(DependencyPassType, dataBlock)
 	v := DependencyPassVisitor{cur: block, dataBlock: dataBlock, c: c, pass: pass}
+	return v
 	ast.Walk(v, block.node)
 
 	block.Print("== Defines ==")
