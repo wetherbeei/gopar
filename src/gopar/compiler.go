@@ -25,6 +25,7 @@ type PassType uint
 
 const (
 	BasicBlockPassType PassType = iota
+	AccessPassType
 	DependencyPassType
 	DefinedTypesPassType
 )

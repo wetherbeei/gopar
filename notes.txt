@@ -43,6 +43,11 @@ Steps:
   - Launch the underlying 'go' program with modified GOPATH env
     - <path to src/rtlib>:<path to generated src/>:<original path>
 
+Competitors:
+CUDA, OpenCL, DirectCompute
+OpenACC, C++AMP, Thrust, Bolt
+X10, Chapel, Nesl, Delite, Par4all
+
 Loop dependencies: "PLDI'12 Logical Inference Techniques for Loop Parallelization"
 - "array abstraction"
 - "uniform set representation"
@@ -115,10 +120,22 @@ Parallel kernel detection:
     }
     done<- 1
   }()
-- The loop is parallelized, outer go code is run as normal. Only allow 1 loop
-per goroutine launch? Guess not, no reason to, just check data dependencies
-between kernel launches.
+- The loop is parallelized, outer go code is run as normal.
 
+Affine array accesses:
+
+var N = 10
+for x := 0; x < N; x++ {
+  for y := 0; y < M; y++ {
+    a[y*N + x] += 1
+  }
+}
+
+Store as an array of sums, or store nil if the expression is not affine. Later
+passes will test if the value of N is fixed for all loop iterations. If the
+expression is not affine, then we must assume the access introduces a
+dependency across all iterations. This is fine if we're only reading a value,
+but for writes they must not be parallelized.
 
 Runtime behavior: /gopar/rtlib
 - detect channel write to parallelized kernel

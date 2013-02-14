@@ -2,6 +2,12 @@ package main
 
 import "fmt"
 
+func structTest(b []DataB) {
+	for idx := range b {
+		b[idx].c += 1
+	}
+}
+
 func operate(idx int, a []int, b []int) (outcome bool) {
 	answer := 100 * a[idx]
 	b[idx] = answer
