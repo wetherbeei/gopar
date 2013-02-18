@@ -12,7 +12,7 @@ func operate(idx int, a []int, b []int) (outcome bool) {
 	answer := 100 * a[idx]
 	b[idx] = answer
 	if a := b[idx]; a > 0 {
-		b[idx] += 1
+		b[idx+1] += 1
 	} else if bx := a; a == 0 {
 		b[idx] = bx
 	} else {

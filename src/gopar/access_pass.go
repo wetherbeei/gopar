@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -42,6 +43,22 @@ type Identifier struct {
 type IdentifierGroup struct {
 	t     AccessType
 	group []Identifier // [a, b, c[affine expr], d]
+}
+
+func (ig *IdentifierGroup) String() string {
+	var buffer bytes.Buffer
+	for _, i := range ig.group {
+		buffer.WriteString(i.id)
+		if i.isIndexed {
+			buffer.WriteString("[")
+			buffer.WriteString(i.index)
+			buffer.WriteString("]")
+		}
+		buffer.WriteString(".")
+	}
+	buffer.WriteString(" ")
+	buffer.WriteString(accessTypeString[ig.t])
+	return buffer.String()
 }
 
 type AccessPassData struct {
@@ -77,7 +94,7 @@ func (v AccessPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
 	}
 	block.Print("== Accesses ==")
 	for _, access := range dataBlock.accesses {
-		block.Printf("%+v = %s", access.group, accessTypeString[access.t])
+		block.Printf(access.String())
 	}
 	MergeDependenciesUpwards(block)
 	return
@@ -87,7 +104,8 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 	// Get the closest enclosing basic block for this node
 	dataBlock := v.dataBlock
 	b := v.cur
-	// Helper functions
+	// Helper functions.
+	// Define adds the identifier as being defined in this block
 	Define := func(ident string, expr ast.Expr) {
 		if ident == "_" {
 			return
@@ -96,22 +114,65 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		b.Printf("Defined %s = %T %+v", ident, expr, expr)
 	}
 
+	// Access recording:
+	// - RecordAccess records the final identifier group
+	// - AccessIdentBuild takes an identifier group and an expression and
+	//     recursively builds the group out of the expression
+	// - AccessExpr 
 	RecordAccess := func(ident *IdentifierGroup, t AccessType) {
+		ident.t = t
 		if ident.group[0].id == "_" {
 			return
 		}
 		dataBlock.accesses = append(dataBlock.accesses, *ident)
-		b.Print("Accessed: %+v", ident)
+		b.Printf("Accessed: %+v", ident)
 	}
 
-	// TOOD: finish this
-	AccessIdentBuild := func(group *IdentifierGroup, expr ast.Expr) {
+	// Support:
+	// a[idx].b
+	// a.b[idx].c
+	var AccessIdentBuild func(group *IdentifierGroup, expr ast.Expr)
+	AccessIdentBuild = func(group *IdentifierGroup, expr ast.Expr) {
 		var ident Identifier
 		switch t := expr.(type) {
 		case *ast.Ident:
 			ident.id = t.Name
+		case *ast.SelectorExpr:
+			// x.y.z expressions
+			// e.X = x.y
+			// e.Sel = z
+			ident.id = t.Sel.Name
+			AccessIdentBuild(group, t.X)
+		case *ast.IndexExpr:
+			// a[idx][x]
+			// a[idx+1]
+			// e.X = a
+			// e.Index = idx+1
+			//AccessIdent(t.Index, ReadAccess)
+			switch x := t.X.(type) {
+			case *ast.Ident:
+				ident.id = x.Name
+			default:
+				b.Print("Unresolved array expression %T %+v", x, x)
+			}
+			switch i := t.Index.(type) {
+			case *ast.Ident:
+				ident.index = i.Name
+				ident.isIndexed = true
+			default:
+				// can't resolve array access, record for the entire array
+				b.Printf("Unresolved array access %T [%+v]", i, i)
+			}
+		default:
+			b.Printf("Unknown ident %T %+v", t, t)
 		}
 		group.group = append(group.group, ident)
+	}
+
+	AccessIdent := func(expr ast.Expr, t AccessType) {
+		ig := &IdentifierGroup{}
+		AccessIdentBuild(ig, expr)
+		RecordAccess(ig, t)
 	}
 
 	var AccessExpr func(expr ast.Expr, t AccessType)
@@ -126,41 +187,14 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 			for _, funcArg := range e.Args {
 				AccessExpr(funcArg, ReadAccess)
 			}
+
 		// These three expression types form the basis of a memory access.
-		// ast.Ident
-		// ast.IndexExpr
-		// ast.SelectorExpr
-		case *ast.IndexExpr:
-			// a[idx+1]
-			// e.X = a
-			// e.Index = idx+1
-			// TODO: more granular - treat each index as unique
-			idGroup := &IdentifierGroup{}
-			AccessIdentBuild(idGroup, e.X)
-			RecordAccess(idGroup, t)
-			//AccessExpr(e.X, t)
-			idGroup = &IdentifierGroup{}
-			AccessIdentBuild(idGroup, e.Index)
-			RecordAccess(idGroup, ReadAccess)
-			//AccessExpr(e.Index, ReadAccess)
-		case *ast.SelectorExpr:
-			// x.y.z expressions
-			// e.X = x.y
-			// e.Sel = y
-			// TODO: more granular level of read controls
-			// TODO: what about x.y[a]? wouldn't pick up read to [a]
-			// Support:
-			// a[idx].b.c.[idx2].e
-			switch e.X.(type) {
-			case *ast.Ident:
-				// Build a joint ast.Ident "a.b"
-				//e.Sel expr.Name
-			}
-			AccessExpr(e.X, t)
-		case *ast.Ident:
-			AccessExpr(e, t)
+		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident:
+			AccessIdent(e, t)
 		case *ast.BasicLit:
 			// ignore, builtin constant
+		case *ast.ArrayType, *ast.ChanType:
+			// ignore, type expressions
 		default:
 			fmt.Printf("Unknown access expression %T\n", expr)
 		}
@@ -280,11 +314,16 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		AccessExpr(t.Chan, WriteAccess)
 		return nil
 	case *ast.CallExpr:
-		AccessExpr(t.Fun, ReadAccess)
 		for _, expr := range t.Args {
 			AccessExpr(expr, ReadAccess)
 		}
-		return nil
+		// go down the call to a FuncLit
+		switch f := t.Fun.(type) {
+		case *ast.Ident:
+			AccessExpr(f, ReadAccess)
+		default:
+			return nil
+		}
 	case *ast.BranchStmt:
 		// ignore break/continue/goto/fallthrough
 		return nil

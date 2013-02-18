@@ -140,3 +140,4 @@ but for writes they must not be parallelized.
 Runtime behavior: /gopar/rtlib
 - detect channel write to parallelized kernel
 - decide to batch/start timeout to 
+
