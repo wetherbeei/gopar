@@ -141,3 +141,14 @@ Runtime behavior: /gopar/rtlib
 - detect channel write to parallelized kernel
 - decide to batch/start timeout to 
 
+
+Interface support?
+- Interfaces are a pair of [type, val], where val is the actual value if less
+    than uintptr, or a pointer to the struct if greater than uintptr
+- Need to copy all structs into contiguous memory
+- Structs could have differing types -> different sizes
+- How to calculate offset
+- Reduce warp branching by sorting different interface types together
+    - Don't "sort", but group into buckets as anaylzing
+    - Need to copy back output in the original order
+    - Offset array to the beginning of each bucket

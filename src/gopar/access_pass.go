@@ -74,7 +74,7 @@ func (d *AccessPassData) FillIn(isWrite bool, node ast.Node) (err error) {
 func NewAccessPassData() *AccessPassData {
 	return &AccessPassData{
 		defines:  make(map[string]ast.Expr),
-		accesses: make([]IdentifierGroup, 1),
+		accesses: make([]IdentifierGroup, 0),
 	}
 }
 
@@ -90,12 +90,13 @@ func (v AccessPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
 
 	block.Print("== Defines ==")
 	for ident, expr := range dataBlock.defines {
-		block.Printf("%s = %+v", ident, expr)
+		block.Printf("%s = %T %+v", ident, expr, expr)
 	}
 	block.Print("== Accesses ==")
 	for _, access := range dataBlock.accesses {
 		block.Printf(access.String())
 	}
+
 	MergeDependenciesUpwards(block)
 	return
 }
@@ -132,6 +133,8 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 	// a[idx].b
 	// a.b[idx].c
 	var AccessIdentBuild func(group *IdentifierGroup, expr ast.Expr)
+	var AccessExpr func(expr ast.Expr, t AccessType)
+
 	AccessIdentBuild = func(group *IdentifierGroup, expr ast.Expr) {
 		var ident Identifier
 		switch t := expr.(type) {
@@ -155,6 +158,7 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 			default:
 				b.Print("Unresolved array expression %T %+v", x, x)
 			}
+			AccessExpr(t.Index, ReadAccess)
 			switch i := t.Index.(type) {
 			case *ast.Ident:
 				ident.index = i.Name
@@ -175,7 +179,6 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		RecordAccess(ig, t)
 	}
 
-	var AccessExpr func(expr ast.Expr, t AccessType)
 	AccessExpr = func(expr ast.Expr, t AccessType) {
 		// recursively fill in accesses for an expression
 		switch e := expr.(type) {
@@ -358,10 +361,27 @@ func (pass *AccessPass) GetDependencies() []PassType {
 
 func MergeDependenciesUpwards(child *BasicBlock) {
 	// TODO: merge reads/writes of identifiers outside this scope
+	if child.parent == nil {
+		return
+	}
+	parent := child.parent
+	dataBlock := child.Get(AccessPassType).(*AccessPassData)
+	parentDataBlock := parent.Get(AccessPassType).(*AccessPassData)
+	for _, access := range dataBlock.accesses {
+		// move to parent if not defined in this block
+		if _, ok := dataBlock.defines[access.group[0].id]; !ok {
+			var ig IdentifierGroup = access
+			parentDataBlock.accesses = append(parentDataBlock.accesses, ig)
+			parent.Print("<< Merged upwards", ig.String())
+		}
+	}
+	return
 }
 
 func (pass *AccessPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) BasicBlockVisitor {
 	dataBlock := NewAccessPassData()
 	block.Set(AccessPassType, dataBlock)
+	block.Printf("New AccessPassData for %+v", block)
+	block.Printf("Data: %+v", block.data)
 	return AccessPassVisitor{cur: block, dataBlock: dataBlock, c: c, pass: pass}
 }

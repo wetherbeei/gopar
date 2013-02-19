@@ -85,8 +85,8 @@ func (v BasicBlockPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		return v
 	}
 	if isBasicBlockNode(node) {
-		block.Printf("+ new block: %T %v", node, node)
 		newBlock := NewBasicBlock(node, block)
+		newBlock.Printf("+ new block: %T %v", node, node)
 		v.cur = newBlock
 		v.pass.SetResult(node, newBlock)
 	}
@@ -112,7 +112,7 @@ func (pass *BasicBlockPass) GetDependencies() []PassType {
 }
 
 func (pass *BasicBlockPass) RunFunctionPass(function *ast.FuncDecl, c *Compiler) (modified bool, err error) {
-	v := BasicBlockPassVisitor{cur: NewBasicBlock(function, nil), c: c, pass: pass}
+	v := BasicBlockPassVisitor{cur: nil, c: c, pass: pass}
 	ast.Walk(v, function)
 	return
 }
