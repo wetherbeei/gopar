@@ -18,7 +18,7 @@ var builtinTranslated map[string]bool = map[string]bool{
 
 func isBasicBlockNode(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl, *ast.IfStmt, *ast.BlockStmt:
+	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl, *ast.FuncLit, *ast.IfStmt, *ast.BlockStmt:
 		return true
 	}
 	return false

@@ -33,20 +33,23 @@ func main() {
 	a := make([]int, 1000000)
 	b := make([]int, 1000000)
 	done := make(chan int)
-	go func() {
+	var z int
+	z = 1
+	z++
+	z += 1
+	go func(c int) {
 		// Listen for new data on work channel 
 		// Kernel copy channel buffer to mem
 		// Launch kernel
 		for idx, _ := range a {
-			operate(idx, a, b)
+			if operate(idx, a, b) {
+				fmt.Println(c)
+			}
 		}
 		// Kernel copy back
 		done <- 1
-	}()
-	var z int
+	}(z)
 	z = <-done
-	z++
-	z += 1
 	for i, val := range a {
 		fmt.Println(i, val)
 		break

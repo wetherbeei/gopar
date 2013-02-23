@@ -89,11 +89,11 @@ type DefaultBasicBlockVisitor struct {
 }
 
 func (d DefaultBasicBlockVisitor) Visit(node ast.Node) BasicBlockVisitor {
-	return nil
+	return d
 }
 
-func (d DefaultBasicBlockVisitor) Done(b *BasicBlock) (bool, error) {
-	return false, fmt.Errorf("Undefined pass")
+func (d DefaultBasicBlockVisitor) Done(b *BasicBlock) (modified bool, err error) {
+	return
 }
 
 // Run through each basic block in depth-first order. When a new basic block is
@@ -209,6 +209,9 @@ func RunBasicBlock(pass Pass, root *BasicBlock, c *Compiler) (modified bool, err
 	passVisitor := pass.RunBasicBlockPass(root, c)
 	n := BasicBlockVisitorImpl{pass: pass, c: c, block: root, passVisitor: passVisitor}
 	ast.Walk(n, root.node)
+	if passVisitor == nil {
+		return
+	}
 	mod, e := passVisitor.Done(root)
 	n.modified = n.modified || mod
 	if n.err == nil {

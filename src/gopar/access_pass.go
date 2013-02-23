@@ -56,7 +56,6 @@ func (ig *IdentifierGroup) String() string {
 		}
 		buffer.WriteString(".")
 	}
-	buffer.WriteString(" ")
 	buffer.WriteString(accessTypeString[ig.t])
 	return buffer.String()
 }
@@ -183,23 +182,25 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		// recursively fill in accesses for an expression
 		switch e := expr.(type) {
 		case *ast.BinaryExpr:
+			b.Printf("BinaryExpr %T %+v , %T %+v", e.X, e.X, e.Y, e.Y)
 			AccessExpr(e.X, ReadAccess)
 			AccessExpr(e.Y, ReadAccess)
 		case *ast.CallExpr:
-			AccessExpr(e.Fun, ReadAccess)
 			for _, funcArg := range e.Args {
 				AccessExpr(funcArg, ReadAccess)
 			}
-
 		// These three expression types form the basis of a memory access.
 		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident:
 			AccessIdent(e, t)
+		case *ast.UnaryExpr:
+			// <-x
+			AccessExpr(e.X, ReadAccess)
 		case *ast.BasicLit:
 			// ignore, builtin constant
 		case *ast.ArrayType, *ast.ChanType:
 			// ignore, type expressions
 		default:
-			fmt.Printf("Unknown access expression %T\n", expr)
+			fmt.Printf("Unknown access expression %T %+v\n", expr, expr)
 		}
 	}
 
@@ -212,25 +213,20 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 	}
 
 	b.Print("start", reflect.TypeOf(node), node)
-	switch t := node.(type) {
-	case *ast.CallExpr:
-		// tag this node with a reference to the surrounding BasicBlock so we can
-		// fill in additional reads/writes once we resolve all functions
-		b.Print("+ tagged for later pass")
-		v.pass.SetResult(t, b)
-	}
 
 	// Analyze all AST nodes for definitions and accesses
 	switch t := node.(type) {
-	case *ast.FuncDecl:
+	case *ast.FuncDecl, *ast.FuncLit:
+		// pass - go into FuncType and the body BlockStmt
+	case *ast.FuncType:
 		// defines arguments, named return types
-		b.Printf("Func: %+v -> %+v", t.Type.Params, t.Type.Results)
+		b.Printf("Func: %+v -> %+v", t.Params, t.Results)
 		var defines []*ast.Field
-		if t.Type.Params != nil {
-			defines = append(defines, t.Type.Params.List...)
+		if t.Params != nil {
+			defines = append(defines, t.Params.List...)
 		}
-		if t.Type.Results != nil {
-			defines = append(defines, t.Type.Results.List...)
+		if t.Results != nil {
+			defines = append(defines, t.Results.List...)
 		}
 		for _, paramGroup := range defines {
 			for _, param := range paramGroup.Names {
@@ -239,12 +235,12 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		}
 		return nil
 	case *ast.ForStmt:
-		b.Printf("For %+v", t.Init)
+		b.Printf("For %+v; %+v; %+v", t.Init, t.Cond, t.Post)
 		// TODO: t.Init defines
-		AccessExpr(t.Cond, ReadAccess)
+		//AccessExpr(t.Cond, ReadAccess)
 		// TODO: t.Post accesses (writes??)
 		//AccessExpr(t.Post, WriteAccess)
-		return nil
+		//return nil
 	case *ast.RangeStmt:
 		// only := range
 		if t.Tok == token.DEFINE {
@@ -320,11 +316,15 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		for _, expr := range t.Args {
 			AccessExpr(expr, ReadAccess)
 		}
-		// go down the call to a FuncLit
-		switch f := t.Fun.(type) {
-		case *ast.Ident:
-			AccessExpr(f, ReadAccess)
+		switch t.Fun.(type) {
+		case *ast.FuncLit:
+			// go down a FuncLit branch
 		default:
+			// tag this node with a reference to the surrounding BasicBlock so we can
+			// fill in additional reads/writes once we resolve all functions
+			b.Printf("\x1b[33m+\x1b[0m tagged for later pass: %+v", t)
+			v.pass.SetResult(t, b)
+			//AccessExpr(f, ReadAccess)
 			return nil
 		}
 	case *ast.BranchStmt:
@@ -381,7 +381,5 @@ func MergeDependenciesUpwards(child *BasicBlock) {
 func (pass *AccessPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) BasicBlockVisitor {
 	dataBlock := NewAccessPassData()
 	block.Set(AccessPassType, dataBlock)
-	block.Printf("New AccessPassData for %+v", block)
-	block.Printf("Data: %+v", block.data)
 	return AccessPassVisitor{cur: block, dataBlock: dataBlock, c: c, pass: pass}
 }

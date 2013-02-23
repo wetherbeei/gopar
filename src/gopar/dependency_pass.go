@@ -21,3 +21,62 @@ func ClassifyAccess(ident string, t AccessType) {
 	}
 }
 */
+type DependencyPass struct {
+	BasePass
+}
+
+type DependencyType uint
+
+const (
+	ReadOnly DependencyType = iota
+	WriteFirst
+	ReadWrite
+)
+
+var dependencyTypeString = map[DependencyType]string{
+	ReadOnly:   "\x1b[32mReadOnly\x1b[0m",
+	WriteFirst: "\x1b[33mWriteFirst\x1b[0m",
+	ReadWrite:  "\x1b[35mReadWrite\x1b[0m",
+}
+
+type DependencyLevel struct {
+	id         string
+	dependency DependencyType
+	isIndexed  bool // is the children map by sub-expression (x.y) or index (x[y])
+	children   map[string]*DependencyLevel
+}
+
+func NewDependencyLevel() *DependencyLevel {
+	return &DependencyLevel{
+		children: make(map[string]*DependencyLevel),
+	}
+}
+
+type DependencyPassData struct {
+}
+
+func NewDependencyPass() *DependencyPass {
+	return &DependencyPass{
+		BasePass: NewBasePass(),
+	}
+}
+
+func (pass *DependencyPass) GetPassType() PassType {
+	return DependencyPassType
+}
+
+func (pass *DependencyPass) GetPassMode() PassMode {
+	return BasicBlockPassMode
+}
+
+func (pass *DependencyPass) GetDependencies() []PassType {
+	return []PassType{BasicBlockPassType, AccessPassType}
+}
+
+func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) BasicBlockVisitor {
+	dataBlock := block.Get(AccessPassType).(*AccessPassData)
+	for _, access := range dataBlock.accesses {
+		block.Print(access.String())
+	}
+	return DefaultBasicBlockVisitor{}
+}

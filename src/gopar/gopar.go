@@ -36,11 +36,13 @@ func main() {
 		panic(fmt.Errorf("%s is not a main package", compilepkg))
 	}
 
+	showGraph(project)
+
 	compiler := NewCompiler(project)
 	compiler.AddPass(NewDefinedTypesPass())
 	compiler.AddPass(NewBasicBlockPass())
 	compiler.AddPass(NewAccessPass())
-	//compiler.AddPass(NewDependencyPass())
+	compiler.AddPass(NewDependencyPass())
 	err = compiler.Run()
 
 	err = project.write(dir)
