@@ -57,7 +57,7 @@ func (v AccessPassPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		return v
 	}
 
-	b.Printf("start %T %+v", node, node)
+	//b.Printf("start %T %+v", node, node)
 
 	// Locate 
 	switch t := node.(type) {
@@ -66,10 +66,36 @@ func (v AccessPassPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		case *ast.FuncLit:
 			// go down a FuncLit branch
 		case *ast.Ident:
-			funcDecl := v.p.Lookup(f.Name)
+			fun := v.p.Lookup(f.Name)
+			if fun == nil {
+				// builtin function, or not found
+				b.Print("Function not found", f.Name)
+				return nil
+			}
+			funcDecl := fun.Decl.(*ast.FuncDecl)
+			funcType := funcDecl.Type
 			b.Printf("\x1b[33m+\x1b[0m filling in function effects: %+v, %+v", t, funcDecl)
 
 			// Now fill in the accesses this call would have made
+			pos := 0 // argument position
+			for _, arg := range funcType.Params.List {
+				// is the argument able to be modified?
+				// builtin types (slice, map, chan), pointers
+				writeThrough := false
+				switch arg.Type.(type) {
+				case *ast.ArrayType, *ast.MapType, *ast.ChanType:
+					b.Printf("Pass-by-reference %T", arg.Type)
+					writeThrough = true
+				case *ast.StarExpr:
+					b.Printf("Pass-by-pointer %T", arg.Type)
+					writeThrough = true
+				}
+				for _, name := range arg.Names {
+					callArg := t.Args[pos]
+
+					pos++
+				}
+			}
 
 			for _, a := range dataBlock.accesses {
 				b.Print(a.String())
