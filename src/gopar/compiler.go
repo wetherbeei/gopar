@@ -26,11 +26,14 @@ type PassType uint
 const (
 	BasicBlockPassType PassType = iota
 	AccessPassType
+	AccessPassPropogateType
 	DependencyPassType
 	DefinedTypesPassType
 )
 
 type Pass interface {
+	GetBase() *BasePass
+	GetCompiler() *Compiler
 	GetPassMode() PassMode
 
 	GetPassType() PassType
@@ -39,9 +42,9 @@ type Pass interface {
 
 	// Run is executed by the Compiler, and should return true if the AST node was
 	// modified.
-	RunModulePass(*ast.File, *Compiler) (bool, error)
-	RunFunctionPass(*ast.FuncDecl, *Compiler) (bool, error)
-	RunBasicBlockPass(*BasicBlock, *Compiler) BasicBlockVisitor
+	RunModulePass(*ast.File, *Package) (bool, error)
+	RunFunctionPass(*ast.FuncDecl, *Package) (bool, error)
+	RunBasicBlockPass(*BasicBlock, *Package) BasicBlockVisitor
 
 	// Defined by BasePass
 	GetResult(ast.Node) interface{}
@@ -51,10 +54,19 @@ type Pass interface {
 
 type BasePass struct {
 	analysis map[ast.Node]interface{}
+	compiler *Compiler
 }
 
 func NewBasePass() BasePass {
 	return BasePass{analysis: make(map[ast.Node]interface{})}
+}
+
+func (pass *BasePass) GetBase() *BasePass {
+	return pass
+}
+
+func (pass *BasePass) GetCompiler() *Compiler {
+	return pass.compiler
 }
 
 func (pass *BasePass) GetResult(node ast.Node) (analysis interface{}) {
@@ -69,11 +81,11 @@ func (pass *BasePass) Reset() {
 	pass.analysis = make(map[ast.Node]interface{})
 }
 
-func (pass *BasePass) RunModulePass(file *ast.File, c *Compiler) (bool, error) {
+func (pass *BasePass) RunModulePass(file *ast.File, p *Package) (bool, error) {
 	return false, fmt.Errorf("Undefined pass")
 }
 
-func (pass *BasePass) RunFunctionPass(function *ast.FuncDecl, c *Compiler) (bool, error) {
+func (pass *BasePass) RunFunctionPass(function *ast.FuncDecl, p *Package) (bool, error) {
 	return false, fmt.Errorf("Undefined pass")
 }
 
@@ -99,7 +111,7 @@ func (d DefaultBasicBlockVisitor) Done(b *BasicBlock) (modified bool, err error)
 // Run through each basic block in depth-first order. When a new basic block is
 // encountered, call RunBasicBlockPass on it, then return to executing the 
 // current pass.
-func (pass *BasePass) RunBasicBlockPass(b *BasicBlock, c *Compiler) BasicBlockVisitor {
+func (pass *BasePass) RunBasicBlockPass(b *BasicBlock, p *Package) BasicBlockVisitor {
 	return DefaultBasicBlockVisitor{}
 }
 
@@ -120,6 +132,8 @@ func NewCompiler(project *Project) *Compiler {
 }
 
 func (c *Compiler) AddPass(pass Pass) {
+	bp := pass.GetBase()
+	bp.compiler = c
 	var t PassType = pass.GetPassType()
 	c.passes[t] = pass
 	c.passStatus[t] = false
@@ -179,7 +193,7 @@ func (c *Compiler) Run() (err error) {
 
 type BasicBlockVisitorImpl struct {
 	pass        Pass
-	c           *Compiler
+	p           *Package
 	block       *BasicBlock
 	passVisitor BasicBlockVisitor
 	modified    bool
@@ -189,9 +203,9 @@ type BasicBlockVisitorImpl struct {
 func (b BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
 	switch {
 	case isBasicBlockNode(node) && node != b.block.node:
-		basicBlock := b.c.GetPassResult(BasicBlockPassType, node).(*BasicBlock)
+		basicBlock := b.pass.GetCompiler().GetPassResult(BasicBlockPassType, node).(*BasicBlock)
 		var modified bool
-		modified, b.err = RunBasicBlock(b.pass, basicBlock, b.c)
+		modified, b.err = RunBasicBlock(b.pass, basicBlock, b.p)
 		b.modified = b.modified || modified
 		return nil // already traversed
 	case b.passVisitor != nil:
@@ -204,10 +218,10 @@ func (b BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
 	return nil
 }
 
-func RunBasicBlock(pass Pass, root *BasicBlock, c *Compiler) (modified bool, err error) {
+func RunBasicBlock(pass Pass, root *BasicBlock, p *Package) (modified bool, err error) {
 	root.Printf("\x1b[32;1mBasicBlockPass\x1b[0m %T %+v", root.node, root.node)
-	passVisitor := pass.RunBasicBlockPass(root, c)
-	n := BasicBlockVisitorImpl{pass: pass, c: c, block: root, passVisitor: passVisitor}
+	passVisitor := pass.RunBasicBlockPass(root, p)
+	n := BasicBlockVisitorImpl{pass: pass, p: p, block: root, passVisitor: passVisitor}
 	ast.Walk(n, root.node)
 	if passVisitor == nil {
 		return
@@ -225,13 +239,13 @@ func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 	pkg := c.project.get("main")
 	switch pass.GetPassMode() {
 	case ModulePassMode:
-		return pass.RunModulePass(pkg.file, c)
+		return pass.RunModulePass(pkg.file, pkg)
 	case FunctionPassMode:
 		for _, obj := range pkg.TopLevel() {
 			if obj.Kind == ast.Fun {
 				fmt.Println("\x1b[32;1mFunctionPass\x1b[0m", obj.Decl.(*ast.FuncDecl).Name)
 				var passMod bool
-				passMod, err = pass.RunFunctionPass(obj.Decl.(*ast.FuncDecl), c)
+				passMod, err = pass.RunFunctionPass(obj.Decl.(*ast.FuncDecl), pkg)
 				modified = modified || passMod
 				if err != nil {
 					return
@@ -243,7 +257,7 @@ func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 			if obj.Kind == ast.Fun {
 				var passMod bool
 				b := c.GetPassResult(BasicBlockPassType, obj.Decl.(*ast.FuncDecl)).(*BasicBlock)
-				passMod, err = RunBasicBlock(pass, b, c)
+				passMod, err = RunBasicBlock(pass, b, pkg)
 				modified = modified || passMod
 				if err != nil {
 					return

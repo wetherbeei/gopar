@@ -75,7 +75,6 @@ type BasicBlockPass struct {
 type BasicBlockPassVisitor struct {
 	cur  *BasicBlock
 	pass *BasicBlockPass
-	c    *Compiler
 }
 
 func (v BasicBlockPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
@@ -111,8 +110,8 @@ func (pass *BasicBlockPass) GetDependencies() []PassType {
 	return []PassType{}
 }
 
-func (pass *BasicBlockPass) RunFunctionPass(function *ast.FuncDecl, c *Compiler) (modified bool, err error) {
-	v := BasicBlockPassVisitor{cur: nil, c: c, pass: pass}
+func (pass *BasicBlockPass) RunFunctionPass(function *ast.FuncDecl, p *Package) (modified bool, err error) {
+	v := BasicBlockPassVisitor{cur: nil, pass: pass}
 	ast.Walk(v, function)
 	return
 }

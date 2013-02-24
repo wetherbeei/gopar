@@ -13,7 +13,7 @@ type InvalidConstructPass struct {
 	BasePass
 }
 
-func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, c *Compiler) (modified bool, err error) {
+func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, p *Package) (modified bool, err error) {
 	var external []string
 	ast.Inspect(node, func(node ast.Node) bool {
 		if node != nil {
@@ -27,7 +27,7 @@ func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, c *Compiler) (m
 				case *ast.Ident:
 					// Check if the function is builtin, or defined in the package
 					var name string = f.Name
-					if c.project.get("main").Lookup(name) == nil {
+					if p.Lookup(name) == nil {
 						if !builtinTranslated[name] {
 							fmt.Println("Untranslatable function", name)
 							external = append(external, name)

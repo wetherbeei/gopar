@@ -42,6 +42,7 @@ func main() {
 	compiler.AddPass(NewDefinedTypesPass())
 	compiler.AddPass(NewBasicBlockPass())
 	compiler.AddPass(NewAccessPass())
+	compiler.AddPass(NewAccessPassPropogate())
 	compiler.AddPass(NewDependencyPass())
 	err = compiler.Run()
 

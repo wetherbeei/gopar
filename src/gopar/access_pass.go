@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"reflect"
 )
 
 type AccessPass struct {
@@ -66,10 +65,6 @@ type AccessPassData struct {
 	accesses []IdentifierGroup   // read/write of an identifier
 }
 
-func (d *AccessPassData) FillIn(isWrite bool, node ast.Node) (err error) {
-	return
-}
-
 func NewAccessPassData() *AccessPassData {
 	return &AccessPassData{
 		defines:  make(map[string]ast.Expr),
@@ -96,7 +91,6 @@ func (v AccessPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
 		block.Printf(access.String())
 	}
 
-	MergeDependenciesUpwards(block)
 	return
 }
 
@@ -206,13 +200,10 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 
 	if node == nil {
 		// post-order actions (all sub-nodes have been visited)
-		//
-		// Merge the sub-node read/write list with the current read/write list, and
-		// add the block to the current block's child list
 		return v
 	}
 
-	b.Print("start", reflect.TypeOf(node), node)
+	b.Printf("start %T %+v", node, node)
 
 	// Analyze all AST nodes for definitions and accesses
 	switch t := node.(type) {
@@ -316,16 +307,15 @@ func (v AccessPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		for _, expr := range t.Args {
 			AccessExpr(expr, ReadAccess)
 		}
-		switch t.Fun.(type) {
+		switch f := t.Fun.(type) {
 		case *ast.FuncLit:
-			// go down a FuncLit branch
-		default:
-			// tag this node with a reference to the surrounding BasicBlock so we can
+			// go down a FuncLit branch (anonymous closure)
+		case *ast.Ident:
 			// fill in additional reads/writes once we resolve all functions
-			b.Printf("\x1b[33m+\x1b[0m tagged for later pass: %+v", t)
-			v.pass.SetResult(t, b)
-			//AccessExpr(f, ReadAccess)
+			b.Printf("\x1b[33m+\x1b[0m use in later pass: %s", f.Name)
 			return nil
+		default:
+			b.Printf("\x1b[33mUnknown CallExpr %T\x1b[0m", t.Fun)
 		}
 	case *ast.BranchStmt:
 		// ignore break/continue/goto/fallthrough
@@ -359,27 +349,8 @@ func (pass *AccessPass) GetDependencies() []PassType {
 	return []PassType{BasicBlockPassType, DefinedTypesPassType}
 }
 
-func MergeDependenciesUpwards(child *BasicBlock) {
-	// TODO: merge reads/writes of identifiers outside this scope
-	if child.parent == nil {
-		return
-	}
-	parent := child.parent
-	dataBlock := child.Get(AccessPassType).(*AccessPassData)
-	parentDataBlock := parent.Get(AccessPassType).(*AccessPassData)
-	for _, access := range dataBlock.accesses {
-		// move to parent if not defined in this block
-		if _, ok := dataBlock.defines[access.group[0].id]; !ok {
-			var ig IdentifierGroup = access
-			parentDataBlock.accesses = append(parentDataBlock.accesses, ig)
-			parent.Print("<< Merged upwards", ig.String())
-		}
-	}
-	return
-}
-
-func (pass *AccessPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) BasicBlockVisitor {
+func (pass *AccessPass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
 	dataBlock := NewAccessPassData()
 	block.Set(AccessPassType, dataBlock)
-	return AccessPassVisitor{cur: block, dataBlock: dataBlock, c: c, pass: pass}
+	return AccessPassVisitor{cur: block, dataBlock: dataBlock, pass: pass}
 }

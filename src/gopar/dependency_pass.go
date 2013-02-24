@@ -70,10 +70,10 @@ func (pass *DependencyPass) GetPassMode() PassMode {
 }
 
 func (pass *DependencyPass) GetDependencies() []PassType {
-	return []PassType{BasicBlockPassType, AccessPassType}
+	return []PassType{AccessPassPropogateType}
 }
 
-func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, c *Compiler) BasicBlockVisitor {
+func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
 	dataBlock := block.Get(AccessPassType).(*AccessPassData)
 	for _, access := range dataBlock.accesses {
 		block.Print(access.String())

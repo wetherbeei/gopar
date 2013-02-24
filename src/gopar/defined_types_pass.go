@@ -61,7 +61,7 @@ func (pass *DefinedTypesPass) GetDependencies() []PassType {
 	return []PassType{}
 }
 
-func (pass *DefinedTypesPass) RunModulePass(file *ast.File, c *Compiler) (modified bool, err error) {
+func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	data := NewDefinedTypesData()
 	for _, decl := range file.Decls {
 		switch t := decl.(type) {
