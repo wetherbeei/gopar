@@ -20,10 +20,6 @@ func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, p *Package) (mo
 			switch t := node.(type) {
 			case *ast.CallExpr:
 				switch f := t.Fun.(type) {
-				case *ast.FuncLit:
-					// TODO: Allow anonymous functions??
-					fmt.Println("Anonymous function")
-					external = append(external, "<anonymous>")
 				case *ast.Ident:
 					// Check if the function is builtin, or defined in the package
 					var name string = f.Name
@@ -35,13 +31,16 @@ func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, p *Package) (mo
 					} else {
 						fmt.Println("Found supporting function", name)
 					}
+				default:
+					fmt.Println("Unsupported function call", f)
+					external = append(external, "<anonymous>")
 				}
 			case *ast.FuncDecl:
 				fmt.Println("Embedded function", t.Name)
 				external = append(external, t.Name.String())
-			case *ast.SwitchStmt:
-				fmt.Println("Switch stmt")
-				external = append(external, "switch stmt")
+			case *ast.SelectStmt:
+				fmt.Println("Select stmt")
+				external = append(external, "select stmt")
 			case *ast.GoStmt:
 				fmt.Println("Go stmt")
 				external = append(external, "go stmt")

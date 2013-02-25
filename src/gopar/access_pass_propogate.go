@@ -92,7 +92,7 @@ func (v AccessPassPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 				}
 				for _, name := range arg.Names {
 					callArg := t.Args[pos]
-
+					b.Print(callArg, name, writeThrough)
 					pos++
 				}
 			}

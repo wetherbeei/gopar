@@ -11,7 +11,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"go/ast"
 	"go/token"
 )
@@ -94,14 +93,12 @@ func (v AccessPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
 	return
 }
 
-func (pass *AccessPass) ParseBasicBlock(node ast.Node, p *Package) {
+func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// Get the closest enclosing basic block for this node
-	b := pass.GetCompiler().GetPassResult(BasicBlockPassType, node).(*BasicBlock)
+	b := pass.GetCompiler().GetPassResult(BasicBlockPassType, blockNode).(*BasicBlock)
 	dataBlock := NewAccessPassData()
 	b.Set(AccessPassType, dataBlock)
-
-	b.Printf("start %T %+v", node, node)
-
+	b.Printf("\x1b[32;1mBasicBlock\x1b[0m %T %+v", blockNode, blockNode)
 	// Helper functions.
 	// Define adds the identifier as being defined in this block
 	Define := func(ident string, expr ast.Expr) {
@@ -129,10 +126,10 @@ func (pass *AccessPass) ParseBasicBlock(node ast.Node, p *Package) {
 	// Support:
 	// a[idx].b
 	// a.b[idx].c
-	var AccessIdentBuild func(group *IdentifierGroup, expr ast.Expr)
-	var AccessExpr func(expr ast.Expr, t AccessType)
+	var AccessIdentBuild func(group *IdentifierGroup, expr ast.Node)
+	var AccessExpr func(node ast.Node, t AccessType)
 
-	AccessIdentBuild = func(group *IdentifierGroup, expr ast.Expr) {
+	AccessIdentBuild = func(group *IdentifierGroup, expr ast.Node) {
 		var ident Identifier
 		switch t := expr.(type) {
 		case *ast.Ident:
@@ -165,12 +162,12 @@ func (pass *AccessPass) ParseBasicBlock(node ast.Node, p *Package) {
 				b.Printf("Unresolved array access %T [%+v]", i, i)
 			}
 		default:
-			b.Printf("Unknown ident %T %+v", t, t)
+			b.Printf("Unknown expression %T %+v", t, t)
 		}
 		group.group = append(group.group, ident)
 	}
 
-	AccessIdent := func(expr ast.Expr, t AccessType) {
+	AccessIdent := func(expr ast.Node, t AccessType) {
 		ig := &IdentifierGroup{}
 		AccessIdentBuild(ig, expr)
 		RecordAccess(ig, t)
@@ -180,23 +177,22 @@ func (pass *AccessPass) ParseBasicBlock(node ast.Node, p *Package) {
 	// Don't recurse down into other BasicBlock statements, instead manually
 	// call pass.RunBasicBlockPass()
 	AccessExpr = func(node ast.Node, t AccessType) {
-		if isBasicBlockNode(node) {
+		if isBasicBlockNode(node) && node != blockNode {
 			pass.ParseBasicBlock(node, p)
 			return // don't desend into the block
 		}
+		b.Printf("start %T %+v", node, node)
 		// recursively fill in accesses for an expression
 		switch e := node.(type) {
+		// These three expression types form the basis of a memory access.
+		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident:
+			AccessIdent(e, t)
+
+		// Statement/expression blocks
 		case *ast.BinaryExpr:
 			b.Printf("BinaryExpr %T %+v , %T %+v", e.X, e.X, e.Y, e.Y)
 			AccessExpr(e.X, ReadAccess)
 			AccessExpr(e.Y, ReadAccess)
-		case *ast.CallExpr:
-			for _, funcArg := range e.Args {
-				AccessExpr(funcArg, ReadAccess)
-			}
-		// These three expression types form the basis of a memory access.
-		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident:
-			AccessIdent(e, t)
 		case *ast.UnaryExpr:
 			// <-x
 			AccessExpr(e.X, ReadAccess)
@@ -204,12 +200,116 @@ func (pass *AccessPass) ParseBasicBlock(node ast.Node, p *Package) {
 			// ignore, builtin constant
 		case *ast.ArrayType, *ast.ChanType:
 			// ignore, type expressions
+		case *ast.FuncDecl:
+			b.Printf("FuncDecl Recv: %+v", e.Recv)
+			AccessExpr(e.Type, ReadAccess)
+			AccessExpr(e.Body, ReadAccess)
+		case *ast.FuncType:
+			// defines arguments, named return types
+			b.Printf("Func: %+v -> %+v", e.Params, e.Results)
+			var defines []*ast.Field
+			if e.Params != nil {
+				defines = append(defines, e.Params.List...)
+			}
+			if e.Results != nil {
+				defines = append(defines, e.Results.List...)
+			}
+			for _, paramGroup := range defines {
+				for _, param := range paramGroup.Names {
+					Define(param.Name, paramGroup.Type)
+				}
+			}
+		case *ast.ForStmt:
+			b.Printf("For %+v; %+v; %+v", e.Init, e.Cond, e.Post)
+			AccessExpr(e.Init, ReadAccess)
+			AccessExpr(e.Cond, ReadAccess)
+			AccessExpr(e.Post, ReadAccess)
+		case *ast.RangeStmt:
+			// only := range
+			if e.Tok == token.DEFINE {
+				if key, ok := e.Key.(*ast.Ident); ok {
+					// TODO: no support for maps, assumes key is always an array index
+					Define(key.Name, &ast.Ident{Name: "int"})
+				}
+				if val, ok := e.Value.(*ast.Ident); ok {
+					Define(val.Name, e.X)
+				}
+			}
+			// reads
+			AccessExpr(e.X, ReadAccess)
+		case *ast.IfStmt:
+			// fallthrough to descend into e.Init, e.Cond
+		case *ast.ValueSpec:
+			// defines
+			for _, name := range e.Names {
+				Define(name.Name, e.Type)
+			}
+			// reads
+			for _, expr := range e.Values {
+				AccessExpr(expr, ReadAccess)
+			}
+		case *ast.IncDecStmt:
+			AccessExpr(e.X, ReadAccess)
+			AccessExpr(e.X, WriteAccess)
+		case *ast.AssignStmt:
+			// a[idx], x[idx] = b+c+d, idx
+			// writes: a, x reads: idx, b, c, d
+			switch e.Tok {
+			case token.DEFINE:
+				for i, expr := range e.Lhs {
+					if new, ok := expr.(*ast.Ident); ok {
+						Define(new.Name, e.Rhs[i])
+					}
+				}
+			case token.ASSIGN:
+			default:
+				// x += 1, etc
+				for _, expr := range e.Lhs {
+					AccessExpr(expr, ReadAccess)
+				}
+			}
+
+			// assignment (read LHS index, read RHS, write LHS)
+			for _, expr := range e.Rhs {
+				AccessExpr(expr, ReadAccess)
+			}
+			for _, expr := range e.Lhs {
+				b.Printf("write %T %+v", expr, expr)
+				AccessExpr(expr, WriteAccess)
+			}
+		case *ast.SendStmt:
+			AccessExpr(e.Value, ReadAccess)
+			AccessExpr(e.Chan, WriteAccess)
+		case *ast.CallExpr:
+			for _, expr := range e.Args {
+				AccessExpr(expr, ReadAccess)
+			}
+			switch f := e.Fun.(type) {
+			case *ast.Ident:
+				// fill in additional reads/writes once we resolve all functions
+				b.Printf("\x1b[33m>>\x1b[0m use in later pass: %s", f.Name)
+			default:
+				b.Printf("\x1b[33mUnsupported CallExpr %T\x1b[0m", e.Fun)
+			}
+		case *ast.BranchStmt:
+			// ignore break/continue/goto/fallthrough
+		case *ast.ExprStmt:
+			AccessExpr(e.X, ReadAccess)
+		case *ast.BlockStmt:
+			for _, l := range e.List {
+				AccessExpr(l, ReadAccess)
+			}
+		case *ast.ReturnStmt:
+			for _, l := range e.Results {
+				AccessExpr(l, ReadAccess)
+			}
+		case *ast.GoStmt:
+			AccessExpr(e.Call, ReadAccess)
 		default:
-
-			fmt.Printf("Unknown access expression %T %+v\n", expr, expr)
-
+			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", t, t)
 		}
 	}
+	AccessExpr(blockNode, ReadAccess)
 	return
 }
 
@@ -224,7 +324,7 @@ func (pass *AccessPass) GetPassType() PassType {
 }
 
 func (pass *AccessPass) GetPassMode() PassMode {
-	return BasicBlockPassMode
+	return FunctionPassMode
 }
 
 func (pass *AccessPass) GetDependencies() []PassType {
