@@ -57,7 +57,7 @@ func (v AccessPassPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		return v
 	}
 
-	//b.Printf("start %T %+v", node, node)
+	b.Printf("start %T %+v", node, node)
 
 	// Locate 
 	switch t := node.(type) {

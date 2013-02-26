@@ -201,7 +201,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		case *ast.ArrayType, *ast.ChanType:
 			// ignore, type expressions
 		case *ast.FuncDecl:
-			b.Printf("FuncDecl Recv: %+v", e.Recv)
+			AccessExpr(e.Type, ReadAccess)
+			AccessExpr(e.Body, ReadAccess)
+		case *ast.FuncLit: // we don't support closures, but gather access info
 			AccessExpr(e.Type, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.FuncType:
@@ -223,6 +225,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			b.Printf("For %+v; %+v; %+v", e.Init, e.Cond, e.Post)
 			AccessExpr(e.Init, ReadAccess)
 			AccessExpr(e.Cond, ReadAccess)
+
+			AccessExpr(e.Body, ReadAccess)
+
 			AccessExpr(e.Post, ReadAccess)
 		case *ast.RangeStmt:
 			// only := range
@@ -237,8 +242,20 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			}
 			// reads
 			AccessExpr(e.X, ReadAccess)
+			AccessExpr(e.Body, ReadAccess)
 		case *ast.IfStmt:
 			// fallthrough to descend into e.Init, e.Cond
+			AccessExpr(e.Init, ReadAccess)
+			AccessExpr(e.Cond, ReadAccess)
+			AccessExpr(e.Body, ReadAccess)
+
+			AccessExpr(e.Else, ReadAccess)
+		case *ast.DeclStmt:
+			AccessExpr(e.Decl, ReadAccess)
+		case *ast.GenDecl:
+			for _, s := range e.Specs {
+				AccessExpr(s, ReadAccess)
+			}
 		case *ast.ValueSpec:
 			// defines
 			for _, name := range e.Names {
@@ -288,9 +305,12 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			case *ast.Ident:
 				// fill in additional reads/writes once we resolve all functions
 				b.Printf("\x1b[33m>>\x1b[0m use in later pass: %s", f.Name)
+				return
 			default:
 				b.Printf("\x1b[33mUnsupported CallExpr %T\x1b[0m", e.Fun)
+				AccessExpr(e.Fun, ReadAccess)
 			}
+
 		case *ast.BranchStmt:
 			// ignore break/continue/goto/fallthrough
 		case *ast.ExprStmt:
