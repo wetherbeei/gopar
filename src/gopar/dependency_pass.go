@@ -52,7 +52,20 @@ func NewDependencyLevel() *DependencyLevel {
 	}
 }
 
+// Store all dependencies for this block
+type Dependency struct {
+	group   []Identifier
+	depType DependencyType
+}
+
 type DependencyPassData struct {
+	deps []Dependency
+}
+
+func NewDependencyPassData() *DependencyPassData {
+	return &DependencyPassData{
+		deps: make([]Dependency, 0),
+	}
 }
 
 func NewDependencyPass() *DependencyPass {
@@ -70,13 +83,19 @@ func (pass *DependencyPass) GetPassMode() PassMode {
 }
 
 func (pass *DependencyPass) GetDependencies() []PassType {
-	return []PassType{AccessPassPropogateType}
+	return []PassType{AccessPassFuncPropogateType}
 }
 
 func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
 	dataBlock := block.Get(AccessPassType).(*AccessPassData)
+	dependencyData := NewDependencyPassData()
 	for _, access := range dataBlock.accesses {
 		block.Print(access.String())
+		// propogate the access to potentially multiple dependency entries for
+		// subaccesses, arrays, etc
+		for _, dep := range dependencyData.deps {
+			block.Print(dep)
+		}
 	}
 	return DefaultBasicBlockVisitor{}
 }

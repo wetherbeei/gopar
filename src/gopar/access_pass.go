@@ -11,8 +11,11 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"go/ast"
 	"go/token"
+	"math/rand"
+	"strconv"
 )
 
 type AccessPass struct {
@@ -93,6 +96,44 @@ func (v AccessPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
 	return
 }
 
+func AccessIdentBuild(group *IdentifierGroup, expr ast.Node) {
+	var ident Identifier
+	switch t := expr.(type) {
+	case *ast.Ident:
+		ident.id = t.Name
+	case *ast.SelectorExpr:
+		// x.y.z expressions
+		// e.X = x.y
+		// e.Sel = z
+		ident.id = t.Sel.Name
+		AccessIdentBuild(group, t.X)
+	case *ast.IndexExpr:
+		// a[idx][x]
+		// a[idx+1]
+		// e.X = a
+		// e.Index = idx+1
+		//AccessIdent(t.Index, ReadAccess)
+		switch x := t.X.(type) {
+		case *ast.Ident:
+			ident.id = x.Name
+		default:
+			b.Print("Unresolved array expression %T %+v", x, x)
+		}
+		AccessExpr(t.Index, ReadAccess)
+		switch i := t.Index.(type) {
+		case *ast.Ident:
+			ident.index = i.Name
+			ident.isIndexed = true
+		default:
+			// can't resolve array access, record for the entire array
+			fmt.Printf("Unresolved array access %T [%+v]\n", i, i)
+		}
+	default:
+		fmt.Printf("Unknown expression %T %+v\n", t, t)
+	}
+	group.group = append(group.group, ident)
+}
+
 func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// Get the closest enclosing basic block for this node
 	b := pass.GetCompiler().GetPassResult(BasicBlockPassType, blockNode).(*BasicBlock)
@@ -126,46 +167,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// Support:
 	// a[idx].b
 	// a.b[idx].c
-	var AccessIdentBuild func(group *IdentifierGroup, expr ast.Node)
 	var AccessExpr func(node ast.Node, t AccessType)
-
-	AccessIdentBuild = func(group *IdentifierGroup, expr ast.Node) {
-		var ident Identifier
-		switch t := expr.(type) {
-		case *ast.Ident:
-			ident.id = t.Name
-		case *ast.SelectorExpr:
-			// x.y.z expressions
-			// e.X = x.y
-			// e.Sel = z
-			ident.id = t.Sel.Name
-			AccessIdentBuild(group, t.X)
-		case *ast.IndexExpr:
-			// a[idx][x]
-			// a[idx+1]
-			// e.X = a
-			// e.Index = idx+1
-			//AccessIdent(t.Index, ReadAccess)
-			switch x := t.X.(type) {
-			case *ast.Ident:
-				ident.id = x.Name
-			default:
-				b.Print("Unresolved array expression %T %+v", x, x)
-			}
-			AccessExpr(t.Index, ReadAccess)
-			switch i := t.Index.(type) {
-			case *ast.Ident:
-				ident.index = i.Name
-				ident.isIndexed = true
-			default:
-				// can't resolve array access, record for the entire array
-				b.Printf("Unresolved array access %T [%+v]", i, i)
-			}
-		default:
-			b.Printf("Unknown expression %T %+v", t, t)
-		}
-		group.group = append(group.group, ident)
-	}
 
 	AccessIdent := func(expr ast.Node, t AccessType) {
 		ig := &IdentifierGroup{}
@@ -177,6 +179,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// Don't recurse down into other BasicBlock statements, instead manually
 	// call pass.RunBasicBlockPass()
 	AccessExpr = func(node ast.Node, t AccessType) {
+		if node == nil {
+			return
+		}
 		if isBasicBlockNode(node) && node != blockNode {
 			pass.ParseBasicBlock(node, p)
 			return // don't desend into the block
@@ -299,18 +304,26 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.Chan, WriteAccess)
 		case *ast.CallExpr:
 			for _, expr := range e.Args {
-				AccessExpr(expr, ReadAccess)
+				// TODO: change this to ReadAccess when func support is added
+				// this is needed for compiler correctness
+				AccessExpr(expr, WriteAccess)
 			}
 			switch f := e.Fun.(type) {
 			case *ast.Ident:
-				// fill in additional reads/writes once we resolve all functions
-				b.Printf("\x1b[33m>>\x1b[0m use in later pass: %s", f.Name)
+				// Fill in additional reads/writes once we resolve all functions.
+				// Insert a placeholder access that will be removed later
+				placeholder := strconv.FormatInt(rand.Int63(), 10)
+				placeholderIdent := &ast.Ident{Name: placeholder}
+				AccessExpr(placeholderIdent, ReadAccess)
+				pass.SetResult(e, placeholderIdent)
+				b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, f.Name)
 				return
-			default:
-				b.Printf("\x1b[33mUnsupported CallExpr %T\x1b[0m", e.Fun)
+			case *ast.FuncLit:
+				// gather external accesses, and search inside closure, but don't bother
+				// propogating the aliased arguments
 				AccessExpr(e.Fun, ReadAccess)
 			}
-
+			b.Printf("\x1b[33mUnsupported CallExpr %T\x1b[0m", e.Fun)
 		case *ast.BranchStmt:
 			// ignore break/continue/goto/fallthrough
 		case *ast.ExprStmt:
@@ -326,7 +339,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		case *ast.GoStmt:
 			AccessExpr(e.Call, ReadAccess)
 		default:
-			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", t, t)
+			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", e, e)
 		}
 	}
 	AccessExpr(blockNode, ReadAccess)

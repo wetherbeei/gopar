@@ -1,20 +1,6 @@
 // Access pass propogation
 //
-// Alias accesses to function parameters passed by pointers, and record
-// global variable accesses. Propogate accesses upwards through the blocks.
-//
-//
-// func foo(ptr *DataA, val DataB) {
-//   // Read ptr
-//   // Write ptr
-//   // Read val
-//   // Write val
-// }
-// 
-// func main() {
-//   a := &DataA{}
-//   foo(a, DataB{}) // bubble up the reads and writes to "a" (ptr)
-// }
+// Pass accesses up through the blocks to the function declaration
 package main
 
 import (
@@ -29,6 +15,7 @@ type AccessPassPropogateVisitor struct {
 	p         *Package
 	cur       *BasicBlock
 	dataBlock *AccessPassData
+	node      ast.Node
 }
 
 func (v AccessPassPropogateVisitor) Done(block *BasicBlock) (modified bool, err error) {
@@ -48,63 +35,6 @@ func (v AccessPassPropogateVisitor) Done(block *BasicBlock) (modified bool, err 
 }
 
 func (v AccessPassPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
-	// Get the closest enclosing basic block for this node
-	dataBlock := v.dataBlock
-	b := v.cur
-
-	if node == nil {
-		// post-order actions (all sub-nodes have been visited)
-		return v
-	}
-
-	b.Printf("start %T %+v", node, node)
-
-	// Locate 
-	switch t := node.(type) {
-	case *ast.CallExpr:
-		switch f := t.Fun.(type) {
-		case *ast.FuncLit:
-			// go down a FuncLit branch
-		case *ast.Ident:
-			fun := v.p.Lookup(f.Name)
-			if fun == nil {
-				// builtin function, or not found
-				b.Print("Function not found", f.Name)
-				return nil
-			}
-			funcDecl := fun.Decl.(*ast.FuncDecl)
-			funcType := funcDecl.Type
-			b.Printf("\x1b[33m+\x1b[0m filling in function effects: %+v, %+v", t, funcDecl)
-
-			// Now fill in the accesses this call would have made
-			pos := 0 // argument position
-			for _, arg := range funcType.Params.List {
-				// is the argument able to be modified?
-				// builtin types (slice, map, chan), pointers
-				writeThrough := false
-				switch arg.Type.(type) {
-				case *ast.ArrayType, *ast.MapType, *ast.ChanType:
-					b.Printf("Pass-by-reference %T", arg.Type)
-					writeThrough = true
-				case *ast.StarExpr:
-					b.Printf("Pass-by-pointer %T", arg.Type)
-					writeThrough = true
-				}
-				for _, name := range arg.Names {
-					callArg := t.Args[pos]
-					b.Print(callArg, name, writeThrough)
-					pos++
-				}
-			}
-
-			for _, a := range dataBlock.accesses {
-				b.Print(a.String())
-			}
-			//v.pass.SetResult(t, b)
-			//AccessExpr(f, ReadAccess)
-			return nil
-		}
-	}
 	return v
 }
 
@@ -137,7 +67,19 @@ func MergeDependenciesUpwards(child *BasicBlock) {
 	for _, access := range dataBlock.accesses {
 		// move to parent if not defined in this block
 		if _, ok := dataBlock.defines[access.group[0].id]; !ok {
+			// if there is an array access that uses an identifier block defined in 
+			// this block, change the access from b[idx] to b
 			var ig IdentifierGroup = access
+			for idx, ident := range access.group {
+				if _, ok := dataBlock.defines[ident.index]; ok && ident.isIndexed {
+					ig.group = make([]Identifier, idx+1)
+					copy(ig.group, access.group)
+					parent.Printf("Leaving index scope [%s]", ig.group[idx].index)
+					ig.group[idx].isIndexed = false
+					ig.group[idx].index = ""
+				}
+				break
+			}
 			parentDataBlock.accesses = append(parentDataBlock.accesses, ig)
 			parent.Print("<< Merged upwards", ig.String())
 		}

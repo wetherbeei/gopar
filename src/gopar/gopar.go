@@ -41,8 +41,10 @@ func main() {
 	compiler := NewCompiler(project)
 	compiler.AddPass(NewDefinedTypesPass())
 	compiler.AddPass(NewBasicBlockPass())
+	compiler.AddPass(NewCallGraphPass())
 	compiler.AddPass(NewAccessPass())
 	compiler.AddPass(NewAccessPassPropogate())
+	compiler.AddPass(NewAccessPassFuncPropogate())
 	compiler.AddPass(NewDependencyPass())
 	err = compiler.Run()
 
