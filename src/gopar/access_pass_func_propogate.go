@@ -24,6 +24,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 )
 
@@ -51,7 +52,6 @@ func (v AccessPassFuncPropogateVisitor) Done(block *BasicBlock) (modified bool, 
 		block.Printf(access.String())
 	}
 
-	MergeDependenciesUpwards(block)
 	return
 }
 
@@ -59,7 +59,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	// Get the closest enclosing basic block for this node
 	dataBlock := v.dataBlock
 	b := v.cur
-
+	pass := v.pass
 	if node == nil {
 		// post-order actions (all sub-nodes have been visited)
 		node = v.node
@@ -78,7 +78,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 				}
 				funcDecl := fun.Decl.(*ast.FuncDecl)
 				funcType := funcDecl.Type
-				funcDataBlock := pass.compiler.GetPassResult(BasicBlockPassType, fnDecl).(*BasicBlock).Get(AccessPassType).(*AccessPassData)
+				funcDataBlock := pass.GetCompiler().GetPassResult(BasicBlockPassType, funcDecl).(*BasicBlock).Get(AccessPassType).(*AccessPassData)
 
 				child := v.cur
 				parent := child.parent
@@ -102,6 +102,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 							}
 							break
 						}
+						b.Print("Global access", ig.String())
 						funcAccesses = append(funcAccesses, ig)
 					}
 				}
@@ -125,24 +126,38 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 						if writeThrough {
 							callArg := t.Args[pos]
 							callIdent := &IdentifierGroup{}
-							AccessIdentBuild(callIdent, callArg)
+							AccessIdentBuild(callIdent, callArg, nil)
 
 							// Find all accesses to these variables
 							for _, access := range funcDataBlock.accesses {
 								// Replace the function arg name with the callIdent prefix
 								if access.group[0].id == argName.Name {
-
+									// check if an index variable is also a function argument and
+									// remove it
+									newAccess := access.group // full copy
+									for idx, ident := range newAccess {
+										if _, ok := funcDataBlock.defines[ident.index]; ok && ident.isIndexed {
+											newAccess = newAccess[0 : idx+1]
+											newAccess[idx].isIndexed = false
+											b.Printf("Stripping array index %s", ident.index)
+											newAccess[idx].index = ""
+										}
+										break
+									}
+									// replace access[0] with callIdent
+									var ig IdentifierGroup
+									ig.t = access.t
+									ig.group = append(ig.group, callIdent.group...)
+									ig.group = append(ig.group, newAccess[1:]...)
+									b.Printf("%s -> %s", access.String(), ig.String())
+									funcAccesses = append(funcAccesses, ig)
 								}
 							}
-							b.Print(callArg, argName)
 						}
 						pos++
 					}
 				}
 
-				for _, a := range dataBlock.accesses {
-					b.Print(a.String())
-				}
 				// Propogate ONLY aliased argument accesses upwards
 				// NOTE: doesn't work with recursive functions
 
@@ -155,24 +170,57 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 				for ; child != nil; child = child.parent {
 					// Find the placeholder
 					dataBlock := child.Get(AccessPassType).(*AccessPassData)
-					var idx int
+					var placeholderIdx int
 					var val IdentifierGroup
-					for idx, val = range dataBlock.accesses {
+					for placeholderIdx, val = range dataBlock.accesses {
 						if val.group[0].id == placeholderIdent.Name {
 							break
 						}
 					}
-					b.Print(idx, dataBlock)
-					// Remove the placeholder, insert the function accesses
-					// TODO....
+					b.Printf("Replacing placeholder at %d", placeholderIdx)
+
+					// Remove the placeholder
+					dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
+					// Insert the function accesses
+					funcAccessCopy := funcAccesses
+					b.Print(" << Propogating up")
+					for _, a := range funcAccessCopy {
+						b.Print(a.String())
+					}
+					dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], append(funcAccessCopy, dataBlock.accesses[placeholderIdx:]...)...)
+
+					// Check if the identifier leaves scope
+					for idx := 0; idx < len(funcAccesses); {
+						access := funcAccesses[idx]
+						if _, ok := dataBlock.defines[access.group[0].id]; ok {
+							b.Print("Leaving scope", access.String())
+							funcAccesses = append(funcAccesses[:idx], funcAccesses[idx+1:]...)
+						} else {
+							idx++
+						}
+					}
+
+					// Check if an index variable leaves scope
+					for _, access := range funcAccesses {
+						// check if an index variable is also a function argument and
+						// remove it
+						for idx, ident := range access.group {
+							if _, ok := dataBlock.defines[ident.index]; ok && ident.isIndexed {
+								// update the real value in funcAccesses
+								access.group = access.group[0 : idx+1]
+								access.group[idx].isIndexed = false
+								b.Printf("Stripping array index %s", ident.index)
+								access.group[idx].index = ""
+							}
+							break
+						}
+					}
 				}
 				return nil
 			}
 		}
 		return v
 	}
-
-	b.Printf("start %T %+v", node, node)
 	v.node = node
 
 	return v
@@ -206,12 +254,17 @@ func (pass *AccessPassFuncPropogate) RunBasicBlockPass(block *BasicBlock, p *Pac
 func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	callGraph := pass.compiler.GetPassResult(CallGraphPassType, nil).(*CallGraphPassData)
 	run := make(map[string]bool) // which functions have been propogated
-	var runOrder []string
-	for fn, callDepends := range callGraph.graph {
-		runOrder = append(runOrder, fn)
-		runOrder = append(runOrder, callDepends...)
+	var orderGraph func(map[string][]string, string) []string
+	orderGraph = func(graph map[string][]string, f string) (result []string) {
+		for _, fn := range callGraph.graph[f] {
+			result = append(result, orderGraph(graph, fn)...)
+		}
+		result = append(result, f)
+		return
 	}
 
+	runOrder := orderGraph(callGraph.graph, "main")
+	fmt.Println(runOrder)
 	for _, fnName := range runOrder {
 		fn := p.Lookup(fnName)
 		if fn == nil || run[fnName] {

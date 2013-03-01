@@ -96,7 +96,9 @@ func (v AccessPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
 	return
 }
 
-func AccessIdentBuild(group *IdentifierGroup, expr ast.Node) {
+type AccessExprFn func(node ast.Node, t AccessType)
+
+func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 	var ident Identifier
 	switch t := expr.(type) {
 	case *ast.Ident:
@@ -106,7 +108,7 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node) {
 		// e.X = x.y
 		// e.Sel = z
 		ident.id = t.Sel.Name
-		AccessIdentBuild(group, t.X)
+		AccessIdentBuild(group, t.X, fn)
 	case *ast.IndexExpr:
 		// a[idx][x]
 		// a[idx+1]
@@ -117,9 +119,11 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node) {
 		case *ast.Ident:
 			ident.id = x.Name
 		default:
-			b.Print("Unresolved array expression %T %+v", x, x)
+			fmt.Printf("Unresolved array expression %T %+v", x, x)
 		}
-		AccessExpr(t.Index, ReadAccess)
+		if fn != nil {
+			fn(t.Index, ReadAccess)
+		}
 		switch i := t.Index.(type) {
 		case *ast.Ident:
 			ident.index = i.Name
@@ -167,11 +171,12 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// Support:
 	// a[idx].b
 	// a.b[idx].c
-	var AccessExpr func(node ast.Node, t AccessType)
+
+	var AccessExpr AccessExprFn
 
 	AccessIdent := func(expr ast.Node, t AccessType) {
 		ig := &IdentifierGroup{}
-		AccessIdentBuild(ig, expr)
+		AccessIdentBuild(ig, expr, AccessExpr)
 		RecordAccess(ig, t)
 	}
 
@@ -304,19 +309,25 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.Chan, WriteAccess)
 		case *ast.CallExpr:
 			for _, expr := range e.Args {
-				// TODO: change this to ReadAccess when func support is added
-				// this is needed for compiler correctness
-				AccessExpr(expr, WriteAccess)
+				AccessExpr(expr, ReadAccess)
 			}
 			switch f := e.Fun.(type) {
 			case *ast.Ident:
 				// Fill in additional reads/writes once we resolve all functions.
 				// Insert a placeholder access that will be removed later
-				placeholder := strconv.FormatInt(rand.Int63(), 10)
-				placeholderIdent := &ast.Ident{Name: placeholder}
-				AccessExpr(placeholderIdent, ReadAccess)
-				pass.SetResult(e, placeholderIdent)
-				b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, f.Name)
+				if p.Lookup(f.Name) != nil {
+					placeholder := strconv.FormatInt(rand.Int63(), 10)
+					placeholderIdent := &ast.Ident{Name: placeholder}
+					AccessExpr(placeholderIdent, ReadAccess)
+					pass.SetResult(e, placeholderIdent)
+					b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, f.Name)
+				} else {
+					// we can't see inside the function, assume all of the args are
+					// written to
+					for _, expr := range e.Args {
+						AccessExpr(expr, WriteAccess)
+					}
+				}
 				return
 			case *ast.FuncLit:
 				// gather external accesses, and search inside closure, but don't bother
