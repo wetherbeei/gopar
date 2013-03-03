@@ -40,6 +40,19 @@ type Identifier struct {
 	index     string // single identifier [idx] support for now
 }
 
+func (i *Identifier) Equals(i2 Identifier) bool {
+	if i.id != i2.id {
+		return false // selector doesn't match
+	}
+	if i.isIndexed != i2.isIndexed {
+		return false // one is indexed, the other isn't
+	}
+	if i.isIndexed && i.index != i2.index {
+		return false // index doesn't match
+	}
+	return true
+}
+
 // Represents a.b.c[expr].d accesses
 type IdentifierGroup struct {
 	t     AccessType

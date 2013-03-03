@@ -73,15 +73,15 @@ Compiler Passes:
       thread space. Also record the variables that need to be transferred, and
       any variables that can be marked as private. [CalculateLoopIterations, 
       DataDependence]
-  - CalculateLoopCutoff: generate an expression O(<vars>) < const condition for
+  - //CalculateLoopCutoff: generate an expression O(<vars>) < const condition for
       choosing at runtime to run the parallel function or not
-  - GenerateSupportingFunctions: generate the C kernel source for all functions
-      marked as used in a parallel kernel [PickParallelLoops]
 - Transform
   - //UnrollLoops: use the CalculateLoopCost to figure out 
-  - RuntimeLibImport: add the 'import "goparruntime"' line
+  - RuntimeLibImport: add the 'import "rtlib"' line
+  - GenerateKernel: generate the kernel source and supporting functions, and
+      store it in a text constant injected in another file (kernels.go)
   - RewriteLoops: rewrite the loop site with data transfer calls and kernel 
-      invocation.
+      invocation (rtlib calls)
 
 Call graph generation:
 

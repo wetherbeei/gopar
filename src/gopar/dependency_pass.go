@@ -5,22 +5,10 @@
 
 package main
 
-/*
-func ClassifyAccess(ident string, t AccessType) {
-	if prev, ok := dataBlock.accesses[ident]; ok {
-		// upgrade the previous access
-		if prev == ReadOnly && t == WriteAccess {
-			//dataBlock.accesses[ident] = ReadWrite
-		}
-	} else {
-		if t == ReadAccess {
-			//dataBlock.accesses[ident] = ReadOnly
-		} else if t == WriteAccess {
-			//dataBlock.accesses[ident] = WriteFirst
-		}
-	}
-}
-*/
+import (
+	"bytes"
+)
+
 type DependencyPass struct {
 	BasePass
 }
@@ -28,12 +16,14 @@ type DependencyPass struct {
 type DependencyType uint
 
 const (
-	ReadOnly DependencyType = iota
+	Unknown DependencyType = iota
+	ReadOnly
 	WriteFirst
 	ReadWrite
 )
 
 var dependencyTypeString = map[DependencyType]string{
+	Unknown:    "\x1b[31mUnknown\x1b[0m",
 	ReadOnly:   "\x1b[32mReadOnly\x1b[0m",
 	WriteFirst: "\x1b[33mWriteFirst\x1b[0m",
 	ReadWrite:  "\x1b[35mReadWrite\x1b[0m",
@@ -56,6 +46,39 @@ func NewDependencyLevel() *DependencyLevel {
 type Dependency struct {
 	group   []Identifier
 	depType DependencyType
+}
+
+func (d *Dependency) String() string {
+	var buffer bytes.Buffer
+	for _, i := range d.group {
+		buffer.WriteString(i.id)
+		if i.isIndexed {
+			buffer.WriteString("[")
+			buffer.WriteString(i.index)
+			buffer.WriteString("]")
+		}
+		buffer.WriteString(".")
+	}
+	buffer.WriteString(dependencyTypeString[d.depType])
+	return buffer.String()
+}
+
+func ClassifyAccess(prev DependencyType, t AccessType) DependencyType {
+	if prev != Unknown {
+		// upgrade the previous access
+		if prev == ReadOnly && t == WriteAccess {
+			return ReadWrite
+		}
+		return prev
+	} else {
+		if t == ReadAccess {
+			return ReadOnly
+		} else if t == WriteAccess {
+			return WriteFirst
+		}
+		return Unknown
+	}
+	return Unknown
 }
 
 type DependencyPassData struct {
@@ -90,12 +113,64 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 	dataBlock := block.Get(AccessPassType).(*AccessPassData)
 	dependencyData := NewDependencyPassData()
 	for _, access := range dataBlock.accesses {
-		block.Print(access.String())
+		block.Printf(access.String())
+	}
+	for _, access := range dataBlock.accesses {
+		block.Print("Access: ", access.String())
 		// propogate the access to potentially multiple dependency entries for
 		// subaccesses, arrays, etc
+		//
+		// Check the dep list for sub or super accesses (a.b or a.b.c.d for a.b.c)
+		// Super and exact accesses (dep = a.b, access = a.b.c or a.b[idx])
+		//
+		// a.b = ReadOnly (dep)
+		// a.b.c = WriteAccess (access)
+		// a.b -> ReadWrite
+		for idx, dep := range dependencyData.deps {
+			if len(access.group) < len(dep.group) {
+				continue // can't be a super-access
+			}
+			for i := 0; i < len(dep.group); i++ {
+				if !dep.group[i].Equals(access.group[i]) {
+					break
+				}
+				if i == len(dep.group)-1 {
+					// at the end, everything matches up to here
+					dependencyData.deps[idx].depType = ClassifyAccess(dep.depType, access.t)
+					block.Printf("Super-access %s", dep.String())
+				}
+			}
+		}
+		// Add this access if it's unique (a.b[idx])
+		var matched bool
 		for _, dep := range dependencyData.deps {
-			block.Print(dep)
+			if len(dep.group) != len(access.group) {
+				continue // not an exact match
+			}
+			for i := 0; i < len(dep.group); i++ {
+				if !dep.group[i].Equals(access.group[i]) {
+					break
+				}
+				// if exact match
+				if i == len(dep.group)-1 {
+					matched = true
+				}
+			}
+		}
+		if !matched {
+			dep := Dependency{
+				group:   access.group,
+				depType: ClassifyAccess(Unknown, access.t),
+			}
+			dependencyData.deps = append(dependencyData.deps, dep)
+			block.Printf("Added dep %s", dep.String())
 		}
 	}
+
+	block.Print("== Dependencies ==")
+	for _, dep := range dependencyData.deps {
+		block.Print(dep.String())
+	}
+
 	return DefaultBasicBlockVisitor{}
 }

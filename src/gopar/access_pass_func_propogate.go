@@ -134,7 +134,8 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 								if access.group[0].id == argName.Name {
 									// check if an index variable is also a function argument and
 									// remove it
-									newAccess := access.group // full copy
+									newAccess := make([]Identifier, len(access.group))
+									copy(newAccess, access.group) // full copy
 									for idx, ident := range newAccess {
 										if _, ok := funcDataBlock.defines[ident.index]; ok && ident.isIndexed {
 											newAccess = newAccess[0 : idx+1]
@@ -182,7 +183,8 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					// Remove the placeholder
 					dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
 					// Insert the function accesses
-					funcAccessCopy := funcAccesses
+					var funcAccessCopy []IdentifierGroup
+					funcAccessCopy = append(funcAccessCopy, funcAccesses...)
 					b.Print(" << Propogating up")
 					for _, a := range funcAccessCopy {
 						b.Print(a.String())
