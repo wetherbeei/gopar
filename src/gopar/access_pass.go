@@ -34,8 +34,17 @@ var accessTypeString = map[AccessType]string{
 	WriteAccess: "\x1b[31mWriteAccess\x1b[0m",
 }
 
+type ReferenceType uint
+
+const (
+	NoReference ReferenceType = iota
+	Dereference               // *a
+	AddressOf                 // &a
+)
+
 type Identifier struct {
 	id        string
+	refType   ReferenceType
 	isIndexed bool   // true if this is an indexed identifier
 	index     string // single identifier [idx] support for now
 }
@@ -50,6 +59,9 @@ func (i *Identifier) Equals(i2 Identifier) bool {
 	if i.isIndexed && i.index != i2.index {
 		return false // index doesn't match
 	}
+	if i.refType != i2.refType {
+		return false // reference types don't match
+	}
 	return true
 }
 
@@ -62,6 +74,11 @@ type IdentifierGroup struct {
 func (ig *IdentifierGroup) String() string {
 	var buffer bytes.Buffer
 	for _, i := range ig.group {
+		if i.refType == Dereference {
+			buffer.WriteString("*")
+		} else if i.refType == AddressOf {
+			buffer.WriteString("&")
+		}
 		buffer.WriteString(i.id)
 		if i.isIndexed {
 			buffer.WriteString("[")
@@ -113,6 +130,17 @@ type AccessExprFn func(node ast.Node, t AccessType)
 
 func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 	var ident Identifier
+	// deal with pointers and addresses first
+	switch t := expr.(type) {
+	case *ast.StarExpr:
+		ident.refType = Dereference
+		expr = t.X
+	case *ast.UnaryExpr:
+		if t.Op == token.AND {
+			ident.refType = AddressOf
+		}
+		expr = t.X
+	}
 	switch t := expr.(type) {
 	case *ast.Ident:
 		ident.id = t.Name
@@ -208,7 +236,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		// recursively fill in accesses for an expression
 		switch e := node.(type) {
 		// These three expression types form the basis of a memory access.
-		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident:
+		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident, *ast.UnaryExpr, *ast.StarExpr:
 			AccessIdent(e, t)
 
 		// Statement/expression blocks
@@ -216,9 +244,6 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			b.Printf("BinaryExpr %T %+v , %T %+v", e.X, e.X, e.Y, e.Y)
 			AccessExpr(e.X, ReadAccess)
 			AccessExpr(e.Y, ReadAccess)
-		case *ast.UnaryExpr:
-			// <-x
-			AccessExpr(e.X, ReadAccess)
 		case *ast.BasicLit:
 			// ignore, builtin constant
 		case *ast.ArrayType, *ast.ChanType:

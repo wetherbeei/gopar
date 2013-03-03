@@ -45,7 +45,8 @@ func main() {
 	compiler.AddPass(NewAccessPass())
 	compiler.AddPass(NewAccessPassPropogate())
 	compiler.AddPass(NewAccessPassFuncPropogate())
-	compiler.AddPass(NewDependencyPass())
+	//compiler.AddPass(NewDependencyPass())
+	// pick parallel loops
 	err = compiler.Run()
 
 	err = project.write(dir)

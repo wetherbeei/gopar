@@ -135,6 +135,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 									// check if an index variable is also a function argument and
 									// remove it
 									newAccess := make([]Identifier, len(access.group))
+
 									copy(newAccess, access.group) // full copy
 									for idx, ident := range newAccess {
 										if _, ok := funcDataBlock.defines[ident.index]; ok && ident.isIndexed {
@@ -145,10 +146,23 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 										}
 										break
 									}
+
+									// if the callsite is &a and the access is *a, make the access
+									// a for this function
+									var callIdentCopy []Identifier
+									if callIdent.group[len(callIdent.group)-1].refType == AddressOf && newAccess[len(newAccess)-1].refType == Dereference {
+										b.Print("Removing pointer alias & -> *")
+										newAccess[len(newAccess)-1].refType = NoReference
+										callIdentCopy = make([]Identifier, len(callIdent.group))
+										copy(callIdentCopy, callIdent.group)
+										callIdentCopy[len(callIdentCopy)-1].refType = NoReference
+									} else {
+										callIdentCopy = callIdent.group
+									}
 									// replace access[0] with callIdent
 									var ig IdentifierGroup
 									ig.t = access.t
-									ig.group = append(ig.group, callIdent.group...)
+									ig.group = append(ig.group, callIdentCopy...)
 									ig.group = append(ig.group, newAccess[1:]...)
 									b.Printf("%s -> %s", access.String(), ig.String())
 									funcAccesses = append(funcAccesses, ig)
@@ -203,7 +217,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					}
 
 					// Check if an index variable leaves scope
-					for _, access := range funcAccesses {
+					for accIdx, access := range funcAccesses {
 						// check if an index variable is also a function argument and
 						// remove it
 						for idx, ident := range access.group {
@@ -213,6 +227,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 								access.group[idx].isIndexed = false
 								b.Printf("Stripping array index %s", ident.index)
 								access.group[idx].index = ""
+								funcAccesses[accIdx] = access // write back to the original storage!
 							}
 							break
 						}

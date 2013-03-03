@@ -66,6 +66,7 @@ func MergeDependenciesUpwards(child *BasicBlock) {
 	parentDataBlock := parent.Get(AccessPassType).(*AccessPassData)
 	for _, access := range dataBlock.accesses {
 		// move to parent if not defined in this block
+		// also don't merge *a or &a accesses
 		if _, ok := dataBlock.defines[access.group[0].id]; !ok {
 			// if there is an array access that uses an identifier block defined in 
 			// this block, change the access from b[idx] to b
