@@ -112,11 +112,11 @@ func (pass *DependencyPass) GetDependencies() []PassType {
 func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
 	dataBlock := block.Get(AccessPassType).(*AccessPassData)
 	dependencyData := NewDependencyPassData()
+	block.Set(DependencyPassType, dependencyData)
 	for _, access := range dataBlock.accesses {
 		block.Printf(access.String())
 	}
 	for _, access := range dataBlock.accesses {
-		block.Print("Access: ", access.String())
 		// propogate the access to potentially multiple dependency entries for
 		// subaccesses, arrays, etc
 		//
@@ -128,19 +128,34 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 		// a.b -> ReadWrite
 		for idx, dep := range dependencyData.deps {
 			if len(access.group) < len(dep.group) {
-				continue // can't be a super-access
-			}
-			for i := 0; i < len(dep.group); i++ {
-				if !dep.group[i].Equals(access.group[i]) {
-					break
+				// sub-access
+				for i := 0; i < len(access.group); i++ {
+					if !access.group[i].Equals(dep.group[i]) {
+						break
+					}
+					if i == len(access.group)-1 {
+						// at the end, everything matches up to here
+						dependencyData.deps[idx].depType = ClassifyAccess(dep.depType, access.t)
+						block.Printf("Sub-access %s < %s", dep.String(), access.String())
+						block.Printf("  => %s", dependencyData.deps[idx].String())
+					}
 				}
-				if i == len(dep.group)-1 {
-					// at the end, everything matches up to here
-					dependencyData.deps[idx].depType = ClassifyAccess(dep.depType, access.t)
-					block.Printf("Super-access %s", dep.String())
+			} else {
+				// super-access
+				for i := 0; i < len(dep.group); i++ {
+					if !dep.group[i].Equals(access.group[i]) {
+						break
+					}
+					if i == len(dep.group)-1 {
+						// at the end, everything matches up to here
+						dependencyData.deps[idx].depType = ClassifyAccess(dep.depType, access.t)
+						block.Printf("Super-access %s >= %s", dep.String(), access.String())
+						block.Printf("  => %s", dependencyData.deps[idx].String())
+					}
 				}
 			}
 		}
+
 		// Add this access if it's unique (a.b[idx])
 		var matched bool
 		for _, dep := range dependencyData.deps {

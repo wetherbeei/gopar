@@ -288,8 +288,13 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 					Define(val.Name, e.X)
 				}
 			}
-			// reads
+			// reads from range val
 			AccessExpr(e.X, ReadAccess)
+			// writes to keys
+			AccessExpr(e.Key, WriteAccess)
+			if e.Value != nil {
+				AccessExpr(e.Value, WriteAccess)
+			}
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.IfStmt:
 			// fallthrough to descend into e.Init, e.Cond

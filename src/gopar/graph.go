@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"go/ast"
-	"reflect"
 	"strings"
 )
 
@@ -22,18 +21,18 @@ func (v Visitor) Visit(node ast.Node) (w ast.Visitor) {
 			// TOOD: follow function calls
 			sep = "= "
 		}
-		fmt.Println(strings.Repeat(sep, v.depth), "start", reflect.TypeOf(node), node)
+		fmt.Printf("%s start %T %+v\n", strings.Repeat(sep, v.depth), node, node)
 	} else {
-		fmt.Println(strings.Repeat("  ", v.depth-1), "done", reflect.TypeOf(v.n))
+		fmt.Printf("%s done %T\n", strings.Repeat("  ", v.depth-1), v.n)
 	}
 	return Visitor{depth: v.depth + 1, n: node}
 }
 
 func showGraph(project *Project) {
 	//ast.Print(project.fset, project.get("main").file)
-	mainFn := project.get("main").Lookup("main").Decl.(*ast.FuncDecl)
+	mainFile := project.get("main").file
 	v := Visitor{depth: 0}
-	ast.Walk(v, mainFn)
+	ast.Walk(v, mainFile)
 
 	return
 }

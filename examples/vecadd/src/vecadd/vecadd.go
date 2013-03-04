@@ -4,7 +4,8 @@ import "fmt"
 
 func add(a, b []int) {
 	for idx := range a {
-		a[idx] += b[idx]
+		tmp := b[idx]
+		a[idx] += tmp
 	}
 }
 
