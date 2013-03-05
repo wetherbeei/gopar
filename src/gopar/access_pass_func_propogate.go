@@ -197,8 +197,9 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					// Remove the placeholder
 					dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
 					// Insert the function accesses
-					var funcAccessCopy []IdentifierGroup
-					funcAccessCopy = append(funcAccessCopy, funcAccesses...)
+					funcAccessCopy := make([]IdentifierGroup, len(funcAccesses))
+					copy(funcAccessCopy, funcAccesses)
+
 					b.Print(" << Propogating up")
 					for _, a := range funcAccessCopy {
 						b.Print(a.String())

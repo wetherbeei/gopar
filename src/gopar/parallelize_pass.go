@@ -69,6 +69,7 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 			return
 		}
 		block = loop.children[0]
+		// examine the dependencies of the loop body
 		dependencyData = block.Get(DependencyPassType).(*DependencyPassData)
 		info = &ParallelLoopInfo{
 			indexVar: idxIdent.Name,
