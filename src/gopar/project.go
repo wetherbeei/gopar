@@ -12,9 +12,10 @@ import (
 )
 
 type Package struct {
-	file   *ast.File // the merge of all Files in this package
-	name   string
-	scopes []*ast.Scope // contains all top-level package identifiers
+	project *Project
+	file    *ast.File // the merge of all Files in this package
+	name    string
+	scopes  []*ast.Scope // contains all top-level package identifiers
 }
 
 // Lookup a top-level declaration in this Package
@@ -35,6 +36,10 @@ func (p *Package) TopLevel() map[string]*ast.Object {
 		}
 	}
 	return m
+}
+
+func (p *Package) Location(pos token.Pos) token.Position {
+	return p.project.fset.Position(pos)
 }
 
 type Project struct {
@@ -72,7 +77,7 @@ func (p *Project) load(pkgName string) (err error) {
 			f.Scope.Outer = nil
 		}
 		mergedFile := ast.MergePackageFiles(pkg, ast.FilterFuncDuplicates|ast.FilterImportDuplicates)
-		p.packages[name] = &Package{name: name, file: mergedFile, scopes: scopes}
+		p.packages[name] = &Package{project: p, name: name, file: mergedFile, scopes: scopes}
 	}
 
 	return

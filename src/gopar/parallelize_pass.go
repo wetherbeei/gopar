@@ -1,8 +1,8 @@
 // Parallelize pass (finally)
 //
 // Range statements must be made up of only:
-// ReadAccess for any variable
-// WriteAccess to any variable indexed by the range index
+// ReadOnly for any variable
+// ReadWrite to any variable indexed by the range index
 // WriteFirst access to any variable (make a private copy)
 // - for privatizing, copy the last iteration's value into a variable
 //     i = 0
@@ -13,19 +13,31 @@
 package main
 
 import (
-//"go/ast"
+	"fmt"
+	"go/ast"
+	"go/token"
 )
 
 type ParallelizePass struct {
 	BasePass
 }
 
+type ParallelLoopInfo struct {
+	indexVar   string       // the unique index for iterating ex: idx in (for idx := range slice {})
+	privatize  []Dependency // variables to be privatized for each loop
+	iterations ast.Expr     // an expression representing the number of iterations
+	variables  []ast.Stmt   // values to set for each loop iteration, including the index and value vars
+}
+
 type ParallelizeData struct {
 	// tag with map[ast.RangeStmt]s = some data
+	loops map[ast.Node]*ParallelLoopInfo
 }
 
 func NewParallelizeData() *ParallelizeData {
-	return nil
+	return &ParallelizeData{
+		loops: make(map[ast.Node]*ParallelLoopInfo),
+	}
 }
 
 func NewParallelizePass() *ParallelizePass {
@@ -46,14 +58,95 @@ func (pass *ParallelizePass) GetDependencies() []PassType {
 	return []PassType{DependencyPassType}
 }
 
-func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
-	dependencyData := block.Get(DependencyPassType).(*DependencyPassData)
-	//data := NewParallelizeData()
+func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
+	var block *BasicBlock
+	var dependencyData *DependencyPassData
 
-	block.Print("== Dependencies ==")
-	for _, dep := range dependencyData.deps {
-		block.Print(dep.String())
+	switch t := loop.node.(type) {
+	case *ast.RangeStmt:
+		idxIdent, ok := t.Key.(*ast.Ident)
+		if !ok {
+			return
+		}
+		block = loop.children[0]
+		dependencyData = block.Get(DependencyPassType).(*DependencyPassData)
+		info = &ParallelLoopInfo{
+			indexVar: idxIdent.Name,
+			iterations: &ast.CallExpr{
+				Fun:  &ast.Ident{Name: "len"},
+				Args: []ast.Expr{t.X},
+			},
+		}
+
+		// set value variable
+		if t.Value != nil {
+			info.variables = append(info.variables, &ast.AssignStmt{
+				Lhs: []ast.Expr{t.Value},
+				Rhs: []ast.Expr{&ast.IndexExpr{
+					X:     t.X,
+					Index: idxIdent,
+				}},
+				Tok: token.ASSIGN,
+			})
+		}
+	// case *ast.ForStmt:
+	default:
+		return // not a loop
 	}
 
+	loop.Print("== Dependencies ==")
+	for _, dep := range dependencyData.deps {
+		loop.Print(dep.String())
+		switch dep.depType {
+		case ReadOnly:
+			// nothing
+		case ReadWrite:
+			// each read and write must be indexed by the iteration variable
+			// a[1][idx] ??
+			iterationOnly := false
+			for _, part := range dep.group {
+				if part.isIndexed {
+					if part.index == info.indexVar {
+						iterationOnly = true
+						break // everything under this is fine
+					} else {
+						err = fmt.Errorf("%s crosses iteration bounds with index '%s'", dep.String(), part.index)
+						return
+					}
+				}
+			}
+			if !iterationOnly {
+				err = fmt.Errorf("%s is accessed by all iterations", dep.String())
+				return
+			}
+		case WriteFirst:
+			// privatize
+			info.privatize = append(info.privatize, dep)
+		}
+	}
+	return
+}
+
+func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
+	data := NewParallelizeData()
+
+	var info *ParallelLoopInfo
+	var err error
+	info, err = canParallelize(block)
+
+	if err != nil {
+		block.Printf("\x1b[31;1mCan't parallelize loop\x1b[0m at %s", p.Location(block.node.Pos()))
+		block.Printf("-> %s", err.Error())
+	} else if info != nil {
+		block.Printf("\x1b[33;1mParallel loop\x1b[0m at %s", p.Location(block.node.Pos()))
+		block.Printf("Thread index = '%s'", info.indexVar)
+		if len(info.privatize) > 0 {
+			block.Print("Privatizing:")
+			for _, ig := range info.privatize {
+				block.Printf("- %s", ig.String())
+			}
+		}
+		data.loops[block.node] = info
+	}
 	return DefaultBasicBlockVisitor{}
 }
