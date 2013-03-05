@@ -42,13 +42,19 @@ func main() {
 	compiler.AddPass(NewDefinedTypesPass())
 	compiler.AddPass(NewBasicBlockPass())
 	compiler.AddPass(NewCallGraphPass())
+	// analysis starts
 	compiler.AddPass(NewAccessPass())
 	compiler.AddPass(NewAccessPassPropogate())
 	compiler.AddPass(NewAccessPassFuncPropogate())
 	compiler.AddPass(NewDependencyPass())
 	compiler.AddPass(NewParallelizePass())
+	// modification starts
+	compiler.AddPass(NewInsertBlocksPass())
+
 	// pick parallel loops
 	err = compiler.Run()
+
+	showGraph(project)
 
 	err = project.write(dir)
 	if err != nil {

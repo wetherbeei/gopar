@@ -138,8 +138,8 @@ dependency across all iterations. This is fine if we're only reading a value,
 but for writes they must not be parallelized.
 
 Runtime behavior: /gopar/rtlib
-- detect channel write to parallelized kernel
-- decide to batch/start timeout to 
+- find a device to use on startup
+- copy slices to/from GPU memory
 
 
 Interface support?

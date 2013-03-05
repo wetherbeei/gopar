@@ -32,6 +32,7 @@ const (
 	AccessPassFuncPropogateType
 	DependencyPassType
 	ParallelizePassType
+	InsertBlocksPassType
 )
 
 type Pass interface {

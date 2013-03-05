@@ -23,10 +23,24 @@ type ParallelizePass struct {
 }
 
 type ParallelLoopInfo struct {
-	indexVar   string       // the unique index for iterating ex: idx in (for idx := range slice {})
-	privatize  []Dependency // variables to be privatized for each loop
-	iterations ast.Expr     // an expression representing the number of iterations
-	variables  []ast.Stmt   // values to set for each loop iteration, including the index and value vars
+	indexVar    string       // the unique index for iterating ex: idx in (for idx := range slice {})
+	privatize   []Dependency // variables to be privatized for each loop
+	start, stop ast.Expr     // an expression representing the number of iterations, inclusive
+	step        ast.Expr     // an expression for the step, "idx" will be replaced with the thread index
+	variables   []ast.Stmt   // values to set for each loop iteration, including the index and value vars
+	// these variables hold references to ast blocks for inserting new code
+	//
+	// { // .block
+	//   __parallel := false
+	//   {} // .tests - runtime tests if this loop is parallel
+	//   if __parallel {
+	//     // .parallel
+	//   } else {
+	//     // .sequential - holds the original sequential loop
+	//   }
+	// }
+	block, tests, parallel *ast.BlockStmt
+	sequential             ast.Stmt // the original node
 }
 
 type ParallelizeData struct {
@@ -72,10 +86,23 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 		// examine the dependencies of the loop body
 		dependencyData = block.Get(DependencyPassType).(*DependencyPassData)
 		info = &ParallelLoopInfo{
-			indexVar: idxIdent.Name,
-			iterations: &ast.CallExpr{
-				Fun:  &ast.Ident{Name: "len"},
-				Args: []ast.Expr{t.X},
+			sequential: loop.node.(ast.Stmt),
+			indexVar:   idxIdent.Name,
+			start: &ast.BasicLit{
+				Kind:  token.INT,
+				Value: "0",
+			},
+			// len(X)-1
+			stop: &ast.BinaryExpr{
+				X: &ast.CallExpr{
+					Fun:  &ast.Ident{Name: "len"},
+					Args: []ast.Expr{t.X},
+				},
+				Y:  &ast.BasicLit{Kind: token.INT, Value: "-1"},
+				Op: token.SUB,
+			},
+			step: &ast.Ident{
+				Name: "idx", // no step for range statements
 			},
 		}
 
@@ -129,8 +156,11 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 }
 
 func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
-	data := NewParallelizeData()
-
+	var data *ParallelizeData
+	if data, _ = pass.GetResult(nil).(*ParallelizeData); data == nil {
+		data := NewParallelizeData()
+		pass.SetResult(nil, data)
+	}
 	var info *ParallelLoopInfo
 	var err error
 	info, err = canParallelize(block)
