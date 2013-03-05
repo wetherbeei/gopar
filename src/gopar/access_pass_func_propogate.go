@@ -174,7 +174,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 				}
 
 				// Propogate ONLY aliased argument accesses upwards
-				// NOTE: doesn't work with recursive functions
+				// NOTE: doesn't work with recursive functions??
 
 				// Move upwards, replacing the placeholder access with the group of
 				// accesses made by this function. Stop at variable define boundaries
@@ -196,9 +196,15 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 
 					// Remove the placeholder
 					dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
-					// Insert the function accesses
-					funcAccessCopy := make([]IdentifierGroup, len(funcAccesses))
-					copy(funcAccessCopy, funcAccesses)
+					// Insert the function accesses, do a deep copy
+					var funcAccessCopy []IdentifierGroup
+					for _, v := range funcAccesses {
+						// deep copy the identifers
+						groupCopy := make([]Identifier, len(v.group))
+						copy(groupCopy, v.group)
+						v.group = groupCopy
+						funcAccessCopy = append(funcAccessCopy, v)
+					}
 
 					b.Print(" << Propogating up")
 					for _, a := range funcAccessCopy {
