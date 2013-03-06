@@ -41,6 +41,7 @@ func main() {
 	compiler := NewCompiler(project)
 	compiler.AddPass(NewDefinedTypesPass())
 	compiler.AddPass(NewBasicBlockPass())
+	compiler.AddPass(NewInvalidConstructPass())
 	compiler.AddPass(NewCallGraphPass())
 	// analysis starts
 	compiler.AddPass(NewAccessPass())
@@ -50,7 +51,7 @@ func main() {
 	compiler.AddPass(NewParallelizePass())
 	// modification starts
 	compiler.AddPass(NewInsertBlocksPass())
-
+	compiler.AddPass(NewWriteKernelsPass())
 	// pick parallel loops
 	err = compiler.Run()
 

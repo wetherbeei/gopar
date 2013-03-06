@@ -13,7 +13,26 @@ type InvalidConstructPass struct {
 	BasePass
 }
 
-func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, p *Package) (modified bool, err error) {
+func NewInvalidConstructPass() *InvalidConstructPass {
+	return &InvalidConstructPass{
+		BasePass: NewBasePass(),
+	}
+}
+
+func (pass *InvalidConstructPass) GetPassType() PassType {
+	return InvalidConstructPassType
+}
+
+func (pass *InvalidConstructPass) GetPassMode() PassMode {
+	return BasicBlockPassMode
+}
+
+func (pass *InvalidConstructPass) GetDependencies() []PassType {
+	return []PassType{BasicBlockPassType}
+}
+
+func (pass *InvalidConstructPass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
+	node := block.node
 	var external []string
 	ast.Inspect(node, func(node ast.Node) bool {
 		if node != nil {
@@ -35,9 +54,9 @@ func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, p *Package) (mo
 					fmt.Println("Unsupported function call", f)
 					external = append(external, "<anonymous>")
 				}
-			case *ast.FuncDecl:
-				fmt.Println("Embedded function", t.Name)
-				external = append(external, t.Name.String())
+			case *ast.FuncLit:
+				fmt.Println("Embedded function")
+				external = append(external, "<embedded function>")
 			case *ast.SelectStmt:
 				fmt.Println("Select stmt")
 				external = append(external, "select stmt")
@@ -57,7 +76,7 @@ func (pass *InvalidConstructPass) RunFunctionPass(node ast.Node, p *Package) (mo
 		}
 		return false
 	})
-	fmt.Println("External dependencies", node.(*ast.FuncDecl).Name, external)
-	pass.SetResult(node, external)
-	return false, nil
+	block.Print("External dependencies", external)
+	block.Set(InvalidConstructPassType, external)
+	return DefaultBasicBlockVisitor{}
 }

@@ -24,6 +24,7 @@ type ParallelizePass struct {
 
 type ParallelLoopInfo struct {
 	indexVar    string       // the unique index for iterating ex: idx in (for idx := range slice {})
+	arguments   []Dependency // variables to be copied to/from the kernel
 	privatize   []Dependency // variables to be privatized for each loop
 	start, stop ast.Expr     // an expression representing the number of iterations, inclusive
 	step        ast.Expr     // an expression for the step, "idx" will be replaced with the thread index
@@ -69,12 +70,13 @@ func (pass *ParallelizePass) GetPassMode() PassMode {
 }
 
 func (pass *ParallelizePass) GetDependencies() []PassType {
-	return []PassType{DependencyPassType}
+	return []PassType{DependencyPassType, InvalidConstructPassType}
 }
 
 func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 	var block *BasicBlock
 	var dependencyData *DependencyPassData
+	var invalidData []string
 
 	switch t := loop.node.(type) {
 	case *ast.RangeStmt:
@@ -85,6 +87,7 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 		block = loop.children[0]
 		// examine the dependencies of the loop body
 		dependencyData = block.Get(DependencyPassType).(*DependencyPassData)
+		invalidData = block.Get(InvalidConstructPassType).([]string)
 		info = &ParallelLoopInfo{
 			sequential: loop.node.(ast.Stmt),
 			indexVar:   idxIdent.Name,
@@ -122,12 +125,17 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 		return // not a loop
 	}
 
+	if len(invalidData) > 0 {
+		err = fmt.Errorf("Untranslatable loop: %s", invalidData)
+		return
+	}
 	loop.Print("== Dependencies ==")
 	for _, dep := range dependencyData.deps {
 		loop.Print(dep.String())
 		switch dep.depType {
 		case ReadOnly:
 			// nothing
+			info.arguments = append(info.arguments, dep)
 		case ReadWrite:
 			// each read and write must be indexed by the iteration variable
 			// a[1][idx] ??
@@ -147,6 +155,7 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 				err = fmt.Errorf("%s is accessed by all iterations", dep.String())
 				return
 			}
+			info.arguments = append(info.arguments, dep)
 		case WriteFirst:
 			// privatize
 			info.privatize = append(info.privatize, dep)

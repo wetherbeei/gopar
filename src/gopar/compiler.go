@@ -25,6 +25,7 @@ type PassType uint
 
 const (
 	BasicBlockPassType PassType = iota
+	InvalidConstructPassType
 	CallGraphPassType
 	DefinedTypesPassType
 	AccessPassType
@@ -33,6 +34,7 @@ const (
 	DependencyPassType
 	ParallelizePassType
 	InsertBlocksPassType
+	WriteKernelsPassType
 )
 
 type Pass interface {
