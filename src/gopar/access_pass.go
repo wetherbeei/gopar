@@ -92,15 +92,31 @@ func (ig *IdentifierGroup) String() string {
 }
 
 type AccessPassData struct {
-	//accesses map[string]interface{}    // name.a.b : AccessType or MemoryAccessGroup
-	defines  map[string]ast.Expr // name: type expression
-	accesses []IdentifierGroup   // read/write of an identifier
+	defines  map[string]Type   // name: type
+	accesses []IdentifierGroup // read/write of an identifier
 }
 
 func NewAccessPassData() *AccessPassData {
 	return &AccessPassData{
-		defines:  make(map[string]ast.Expr),
+		defines:  make(map[string]Type),
 		accesses: make([]IdentifierGroup, 0),
+	}
+}
+
+// Create a resolver for types
+func MakeResolver(block *BasicBlock, p *Package) Resolver {
+	return func(ident string) Type {
+		for child := block; child != nil; child = child.parent {
+			defineData := child.Get(AccessPassType).(*AccessPassData)
+			if result, ok := defineData.defines[ident]; ok {
+				return result
+			}
+		}
+		data := p.Lookup(ident).Data
+		if data != nil {
+			return NewType(data.(ast.Expr))
+		}
+		return NewType(nil)
 	}
 }
 
@@ -186,13 +202,15 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	b.Set(AccessPassType, dataBlock)
 	b.Printf("\x1b[32;1mBasicBlock\x1b[0m %T %+v", blockNode, blockNode)
 	// Helper functions.
+	Resolver := MakeResolver(b, p)
 	// Define adds the identifier as being defined in this block
 	Define := func(ident string, expr ast.Expr) {
 		if ident == "_" {
 			return
 		}
-		dataBlock.defines[ident] = expr
-		b.Printf("Defined %s = %T %+v", ident, expr, expr)
+		typ := TypeOf(expr, Resolver)
+		dataBlock.defines[ident] = typ
+		b.Printf("Defined %s = %T %+v", ident, typ, typ)
 	}
 
 	// Access recording:
@@ -202,7 +220,8 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// - AccessExpr 
 	RecordAccess := func(ident *IdentifierGroup, t AccessType) {
 		ident.t = t
-		if ident.group[0].id == "_" {
+		switch ident.group[0].id {
+		case "_", "true", "false":
 			return
 		}
 		dataBlock.accesses = append(dataBlock.accesses, *ident)
@@ -240,14 +259,20 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessIdent(e, t)
 
 		// Statement/expression blocks
+		case *ast.ParenExpr:
+			AccessExpr(e.X, ReadAccess)
 		case *ast.BinaryExpr:
 			b.Printf("BinaryExpr %T %+v , %T %+v", e.X, e.X, e.Y, e.Y)
 			AccessExpr(e.X, ReadAccess)
 			AccessExpr(e.Y, ReadAccess)
 		case *ast.BasicLit:
 			// ignore, builtin constant
-		case *ast.ArrayType, *ast.ChanType:
+		case *ast.ArrayType, *ast.ChanType, *ast.MapType:
 			// ignore, type expressions
+		case *ast.CompositeLit:
+			for _, i := range e.Elts {
+				AccessExpr(i, t)
+			}
 		case *ast.FuncDecl:
 			AccessExpr(e.Type, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
@@ -326,9 +351,26 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			// writes: a, x reads: idx, b, c, d
 			switch e.Tok {
 			case token.DEFINE:
-				for i, expr := range e.Lhs {
-					if new, ok := expr.(*ast.Ident); ok {
-						Define(new.Name, e.Rhs[i])
+				// multi-assign functions
+				if len(e.Lhs) != len(e.Rhs) {
+					pos := 0
+					fnType := TypeOf(e.Rhs[0], Resolver).Expr.(*ast.FuncType)
+					for _, field := range fnType.Results.List {
+						fieldLen := len(field.Names)
+						if fieldLen < 1 {
+							fieldLen = 1
+						}
+						for j := 0; j < fieldLen; j++ {
+							Define(e.Lhs[pos].(*ast.Ident).Name, field.Type)
+							pos++
+						}
+					}
+				} else {
+					// assign each individually
+					for i, expr := range e.Lhs {
+						if new, ok := expr.(*ast.Ident); ok {
+							Define(new.Name, e.Rhs[i])
+						}
 					}
 				}
 			case token.ASSIGN:

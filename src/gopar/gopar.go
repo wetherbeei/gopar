@@ -45,17 +45,17 @@ func main() {
 	compiler.AddPass(NewCallGraphPass())
 	// analysis starts
 	compiler.AddPass(NewAccessPass())
-	compiler.AddPass(NewAccessPassPropogate())
-	compiler.AddPass(NewAccessPassFuncPropogate())
-	compiler.AddPass(NewDependencyPass())
-	compiler.AddPass(NewParallelizePass())
+	//compiler.AddPass(NewAccessPassPropogate())
+	//compiler.AddPass(NewAccessPassFuncPropogate())
+	//compiler.AddPass(NewDependencyPass())
+	//compiler.AddPass(NewParallelizePass())
 	// modification starts
-	compiler.AddPass(NewInsertBlocksPass())
-	compiler.AddPass(NewWriteKernelsPass())
+	//compiler.AddPass(NewInsertBlocksPass())
+	//compiler.AddPass(NewWriteKernelsPass())
 	// pick parallel loops
 	err = compiler.Run()
 
-	showGraph(project)
+	//showGraph(project)
 
 	err = project.write(dir)
 	if err != nil {
