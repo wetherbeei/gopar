@@ -104,18 +104,21 @@ func NewAccessPassData() *AccessPassData {
 }
 
 // Create a resolver for types
-func MakeResolver(block *BasicBlock, p *Package) Resolver {
+func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
+	globalScope := c.GetPassResult(DefinedTypesPassType, nil).(*DefinedTypesData)
 	return func(ident string) Type {
+		block.Print("Resolving ident", ident)
 		for child := block; child != nil; child = child.parent {
 			defineData := child.Get(AccessPassType).(*AccessPassData)
 			if result, ok := defineData.defines[ident]; ok {
 				return result
 			}
 		}
-		data := p.Lookup(ident).Data
-		if data != nil {
-			return NewType(data.(ast.Expr))
+		block.Printf("Global scope lookup: %s", ident)
+		if identType, ok := globalScope.defined[ident]; ok {
+			return identType
 		}
+
 		return NewType(nil)
 	}
 }
@@ -202,7 +205,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	b.Set(AccessPassType, dataBlock)
 	b.Printf("\x1b[32;1mBasicBlock\x1b[0m %T %+v", blockNode, blockNode)
 	// Helper functions.
-	Resolver := MakeResolver(b, p)
+	Resolver := MakeResolver(b, p, pass.compiler)
 	// Define adds the identifier as being defined in this block
 	Define := func(ident string, expr ast.Expr) {
 		if ident == "_" {
@@ -354,7 +357,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				// multi-assign functions
 				if len(e.Lhs) != len(e.Rhs) {
 					pos := 0
-					fnType := TypeOf(e.Rhs[0], Resolver).Expr.(*ast.FuncType)
+					fnType := TypeOf(e.Rhs[0], Resolver).Node.(*ast.FuncType)
 					for _, field := range fnType.Results.List {
 						fieldLen := len(field.Names)
 						if fieldLen < 1 {

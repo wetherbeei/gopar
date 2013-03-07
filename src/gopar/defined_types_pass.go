@@ -9,14 +9,8 @@ import (
 	"go/ast"
 )
 
-type DefinedType struct {
-	ident string
-	// Link to type definition, nil if builtin
-	decl ast.Node
-}
-
 type DefinedTypesData struct {
-	defined map[string]*DefinedType
+	defined map[string]Type
 }
 
 func NewDefinedTypesData() *DefinedTypesData {
@@ -26,17 +20,13 @@ func NewDefinedTypesData() *DefinedTypesData {
 		"rune", "byte", // aliases
 	}
 	d := &DefinedTypesData{
-		defined: make(map[string]*DefinedType),
+		defined: make(map[string]Type),
 	}
 	for _, ident := range builtin {
-		d.defined[ident] = &DefinedType{ident: ident}
+		d.defined[ident] = Type{&ast.Ident{Name: ident}}
 	}
 
 	return d
-}
-
-func (d *DefinedTypesData) Get(ident string) *DefinedType {
-	return d.defined[ident]
 }
 
 type DefinedTypesPass struct {
@@ -66,15 +56,17 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 	for _, decl := range file.Decls {
 		switch t := decl.(type) {
 		case *ast.FuncDecl:
+			data.defined[t.Name.Name] = NewType(t.Type)
 		case *ast.GenDecl:
 			for _, spec := range t.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
 					var name = s.Name.Name
-					data.defined[name] = &DefinedType{ident: name, decl: s}
-					fmt.Printf("New type %s = %T %v\n", name, s, s)
+					data.defined[name] = NewType(s)
 				}
 			}
+		default:
+			fmt.Printf("Unhandled Decl %T %+v", decl, decl)
 		}
 	}
 	pass.SetResult(nil, data)

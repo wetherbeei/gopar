@@ -12,6 +12,12 @@ import (
 	"go/ast"
 )
 
+var builtinIdents map[string]bool = map[string]bool{
+	"bool":      true,
+	"byte":      true,
+	"complex64": true,
+}
+
 type TypeCategory uint
 
 const (
@@ -28,10 +34,10 @@ const (
 )
 
 type Type struct {
-	ast.Expr
+	ast.Node
 }
 
-func NewType(expr ast.Expr) Type {
+func NewType(expr ast.Node) Type {
 	return Type{expr}
 }
 
@@ -41,8 +47,8 @@ func (t Type) Category() TypeCategory {
 
 func (t Type) String() string {
 	var buffer bytes.Buffer
-	var Format func(cur ast.Expr) string
-	Format = func(cur ast.Expr) string {
+	var Format func(cur ast.Node) string
+	Format = func(cur ast.Node) string {
 		switch t := cur.(type) {
 		case *ast.Ident:
 			buffer.WriteString(t.Name)
@@ -63,16 +69,16 @@ func (t Type) String() string {
 		}
 		return ""
 	}
-	Format(t.Expr)
-	return fmt.Sprintf("Type{%s}", buffer.String())
+	Format(t.Node)
+	return buffer.String()
 }
 
 // Takes an identifier, returns the node that defines it. This should search all
 // scopes up to the package level.
 type Resolver func(ident string) Type
 
-func TypeOf(expr ast.Expr, resolver Resolver) Type {
-	var typ ast.Expr = expr
+func TypeOf(expr ast.Node, resolver Resolver) Type {
+	var typ ast.Node = expr
 
 	switch t := expr.(type) {
 	case *ast.CallExpr:
