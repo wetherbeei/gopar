@@ -17,7 +17,7 @@ func NewDefinedTypesData() *DefinedTypesData {
 	builtin := []string{
 		"uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64",
 		"float32", "float64", "complex64", "complex128", "uint", "int", "uintptr",
-		"rune", "byte", // aliases
+		"rune", "byte", "string", "bool", // aliases
 	}
 	d := &DefinedTypesData{
 		defined: make(map[string]Type),
@@ -26,6 +26,8 @@ func NewDefinedTypesData() *DefinedTypesData {
 		d.defined[ident] = Type{&ast.Ident{Name: ident}}
 	}
 
+	d.defined["true"] = d.defined["bool"]
+	d.defined["false"] = d.defined["bool"]
 	return d
 }
 
@@ -62,7 +64,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
 					var name = s.Name.Name
-					data.defined[name] = NewType(s)
+					data.defined[name] = NewType(s.Type)
 				}
 			}
 		default:
@@ -70,5 +72,8 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 		}
 	}
 	pass.SetResult(nil, data)
+	for name, typ := range data.defined {
+		fmt.Printf("%s = %v\n", name, typ)
+	}
 	return
 }

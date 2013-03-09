@@ -123,28 +123,6 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 	}
 }
 
-type AccessPassVisitor struct {
-	cur       *BasicBlock
-	dataBlock *AccessPassData
-	pass      *AccessPass
-	p         *Package
-}
-
-func (v AccessPassVisitor) Done(block *BasicBlock) (modified bool, err error) {
-	dataBlock := v.dataBlock
-
-	block.Print("== Defines ==")
-	for ident, expr := range dataBlock.defines {
-		block.Printf("%s = %T %+v", ident, expr, expr)
-	}
-	block.Print("== Accesses ==")
-	for _, access := range dataBlock.accesses {
-		block.Printf(access.String())
-	}
-
-	return
-}
-
 type AccessExprFn func(node ast.Node, t AccessType)
 
 func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
@@ -192,6 +170,8 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 			// can't resolve array access, record for the entire array
 			fmt.Printf("Unresolved array access %T [%+v]\n", i, i)
 		}
+	case *ast.CompositeLit:
+		// ignore, we're building a type expression, no accesses here
 	default:
 		fmt.Printf("Unknown expression %T %+v\n", t, t)
 	}
@@ -224,7 +204,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	RecordAccess := func(ident *IdentifierGroup, t AccessType) {
 		ident.t = t
 		switch ident.group[0].id {
-		case "_", "true", "false":
+		case "_", "true", "false", "iota", "":
 			return
 		}
 		dataBlock.accesses = append(dataBlock.accesses, *ident)
@@ -372,11 +352,17 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 					// assign each individually
 					for i, expr := range e.Lhs {
 						if new, ok := expr.(*ast.Ident); ok {
-							Define(new.Name, e.Rhs[i])
+							// if RHS[i] is a function, it MUST have one return slot
+							if fnType, ok := TypeOf(e.Rhs[i], Resolver).Node.(*ast.FuncType); ok {
+								Define(new.Name, fnType.Results.List[0].Type)
+							} else {
+								Define(new.Name, e.Rhs[i])
+							}
 						}
 					}
 				}
 			case token.ASSIGN:
+				// nothing
 			default:
 				// x += 1, etc
 				for _, expr := range e.Lhs {
@@ -442,6 +428,15 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		}
 	}
 	AccessExpr(blockNode, ReadAccess)
+
+	b.Print("== Defines ==")
+	for ident, typ := range dataBlock.defines {
+		b.Printf("%s = %v", ident, typ)
+	}
+	b.Print("== Accesses ==")
+	for _, access := range dataBlock.accesses {
+		b.Printf(access.String())
+	}
 	return
 }
 

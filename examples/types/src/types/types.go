@@ -15,6 +15,7 @@ func main() {
 	{
 		var a *int64
 		var b [4]int64
+		var c *Struct1
 	}
 	{
 		a := make([]int64, 10)
@@ -26,6 +27,10 @@ func main() {
 		c, d := a, b
 		d, e, f := Func2()
 		g, h, i := Func3(true, 1)
+	}
+	{
+		a := make(chan int)
+		b := <-a
 	}
 }
 
