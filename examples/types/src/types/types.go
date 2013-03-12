@@ -1,6 +1,12 @@
 // Type tests
 package main
 
+import "fmt"
+import (
+	"go/ast"
+	"go/token"
+)
+
 func main() {
 	{
 		a := 1
@@ -38,6 +44,14 @@ type Struct1 struct {
 	a       int
 	b       string
 	c, d, e float32
+}
+
+func (s *Struct1) Method1() {
+	return
+}
+
+func (s Struct1) Method2() {
+
 }
 
 type Struct2 struct {

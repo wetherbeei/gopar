@@ -24,7 +24,6 @@ type TypeCategory uint
 const (
 	UnknownType TypeCategory = iota
 	BasicType
-	StringType
 	ChanType
 	StructType
 	ArrayType
@@ -32,21 +31,83 @@ const (
 	MapType
 	InterfaceType
 	PointerType
+	FuncType
+	ImportType
 )
 
 type Type struct {
-	ast.Node
+	ast.Node   // pointer
+	fieldOrder []string
+	fields     map[string]*Type
+	methods    map[string]*Type
 }
 
-func NewType(expr ast.Node) Type {
-	return Type{expr}
+// Resolve all first-level fields, but not embedded fields
+func NewType(expr ast.Node) *Type {
+	typ := &Type{Node: expr}
+	if typ.HasFields() {
+		typ.fields = make(map[string]*Type)
+		typ.methods = make(map[string]*Type)
+	}
+	return typ
 }
 
-func (t Type) Category() TypeCategory {
+// Finish filling in this type's embedded structures
+func (t *Type) Complete(resolver Resolver) {
+	return
+}
+
+// Add a method to this type
+func (t *Type) AddMethod(name string, method *ast.FuncDecl) {
+	t.methods[name] = NewType(method.Type)
+	return
+}
+
+func (t *Type) Category() TypeCategory {
+	switch n := t.Node.(type) {
+	case *ast.ChanType:
+		return ChanType
+	case *ast.StructType:
+		return StructType
+	case *ast.ArrayType:
+		if n.Len != nil {
+			return ArrayType
+		} else {
+			return SliceType
+		}
+	case *ast.MapType:
+		return MapType
+	case *ast.InterfaceType:
+		return InterfaceType
+	case *ast.StarExpr:
+		return PointerType
+	case *ast.FuncType:
+		return FuncType
+	}
 	return UnknownType
 }
 
-func (t Type) String() string {
+func (t *Type) HasFields() bool {
+	return (t.Category() == StructType || t.Category() == InterfaceType)
+}
+
+// Return all fields of this struct or interface
+func (t *Type) Fields() []string {
+	if t.HasFields() {
+		return t.fieldOrder
+	}
+	return nil
+}
+
+// Return the type of a struct or interface
+func (t *Type) Field(name string) *Type {
+	if t.HasFields() {
+		return t.fields[name]
+	}
+	return NewType(nil)
+}
+
+func (t *Type) String() string {
 	var buffer bytes.Buffer
 	var Format func(cur ast.Node) string
 	Format = func(cur ast.Node) string {
@@ -82,34 +143,39 @@ func (t Type) String() string {
 			buffer.WriteString("}")
 		case *ast.FuncType:
 			buffer.WriteString("func (")
-			for j, arg := range t.Params.List {
-				for i, name := range arg.Names {
-					buffer.WriteString(name.Name)
-					if i != len(arg.Names)-1 {
+			if t.Params != nil {
+				for j, arg := range t.Params.List {
+					for i, name := range arg.Names {
+						buffer.WriteString(name.Name)
+						if i != len(arg.Names)-1 {
+							buffer.WriteString(", ")
+						}
+					}
+					buffer.WriteString(" ")
+					Format(arg.Type)
+					if j != len(t.Params.List)-1 {
 						buffer.WriteString(", ")
 					}
-				}
-				buffer.WriteString(" ")
-				Format(arg.Type)
-				if j != len(t.Params.List)-1 {
-					buffer.WriteString(", ")
-				}
-			}
-			buffer.WriteString(") (")
-			for j, arg := range t.Results.List {
-				for i, name := range arg.Names {
-					buffer.WriteString(name.Name)
-					if i != len(arg.Names)-1 {
-						buffer.WriteString(", ")
-					}
-				}
-				buffer.WriteString(" ")
-				Format(arg.Type)
-				if j != len(t.Params.List)-1 {
-					buffer.WriteString(", ")
 				}
 			}
 			buffer.WriteString(")")
+			if t.Results != nil {
+				buffer.WriteString(" (")
+				for j, arg := range t.Results.List {
+					for i, name := range arg.Names {
+						buffer.WriteString(name.Name)
+						if i != len(arg.Names)-1 {
+							buffer.WriteString(", ")
+						}
+					}
+					buffer.WriteString(" ")
+					Format(arg.Type)
+					if j != len(t.Params.List)-1 {
+						buffer.WriteString(", ")
+					}
+				}
+				buffer.WriteString(")")
+			}
 		case *ast.MapType:
 			buffer.WriteString("map[")
 			Format(t.Key)
@@ -134,12 +200,12 @@ func (t Type) String() string {
 
 // Takes an identifier, returns the node that defines it. This should search all
 // scopes up to the package level.
-type Resolver func(ident string) Type
+type Resolver func(ident string) *Type
 
-func TypeOf(expr ast.Node, resolver Resolver) Type {
+func TypeOf(expr ast.Node, resolver Resolver) *Type {
 	switch t := expr.(type) {
 	case *ast.CallExpr:
-		var fnType Type
+		var fnType *Type
 		switch f := t.Fun.(type) {
 		case *ast.Ident:
 			if f.Name == "make" {

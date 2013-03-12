@@ -92,13 +92,13 @@ func (ig *IdentifierGroup) String() string {
 }
 
 type AccessPassData struct {
-	defines  map[string]Type   // name: type
+	defines  map[string]*Type  // name: type
 	accesses []IdentifierGroup // read/write of an identifier
 }
 
 func NewAccessPassData() *AccessPassData {
 	return &AccessPassData{
-		defines:  make(map[string]Type),
+		defines:  make(map[string]*Type),
 		accesses: make([]IdentifierGroup, 0),
 	}
 }
@@ -106,7 +106,7 @@ func NewAccessPassData() *AccessPassData {
 // Create a resolver for types
 func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 	globalScope := c.GetPassResult(DefinedTypesPassType, nil).(*DefinedTypesData)
-	return func(ident string) Type {
+	return func(ident string) *Type {
 		block.Print("Resolving ident", ident)
 		for child := block; child != nil; child = child.parent {
 			defineData := child.Get(AccessPassType).(*AccessPassData)
@@ -119,7 +119,7 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 			return identType
 		}
 
-		return NewType(nil)
+		return nil
 	}
 }
 
