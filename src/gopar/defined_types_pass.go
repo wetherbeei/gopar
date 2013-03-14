@@ -11,7 +11,7 @@ import (
 )
 
 type DefinedTypesData struct {
-	defined map[string]*Type
+	defined map[string]Type
 }
 
 func NewDefinedTypesData() *DefinedTypesData {
@@ -21,15 +21,19 @@ func NewDefinedTypesData() *DefinedTypesData {
 		"rune", "byte", "string", "bool", // aliases
 	}
 	d := &DefinedTypesData{
-		defined: make(map[string]*Type),
+		defined: make(map[string]Type),
 	}
 	for _, ident := range builtin {
-		d.defined[ident] = NewType(&ast.Ident{Name: ident})
+		d.defined[ident] = TypeDecl(&ast.Ident{Name: ident})
 	}
 
 	d.defined["true"] = d.defined["bool"]
 	d.defined["false"] = d.defined["bool"]
 	d.defined["iota"] = d.defined["int"]
+
+	// builtin functions
+	d.defined["len"] = TypeDecl(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: &ast.Ident{Name: "int"}}}}})
+	// make is handled dynamically in types.go:TypeOf
 	return d
 }
 
@@ -64,14 +68,14 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 			if t.Recv != nil {
 				methods = append(methods, t)
 			} else {
-				data.defined[t.Name.Name] = NewType(t.Type)
+				data.defined[t.Name.Name] = TypeDecl(t.Type)
 			}
 		case *ast.GenDecl:
 			for _, spec := range t.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
 					var name = s.Name.Name
-					data.defined[name] = NewType(s.Type)
+					data.defined[name] = TypeDecl(s.Type)
 				case *ast.ImportSpec:
 					var name string
 					if s.Name != nil {
@@ -88,7 +92,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 					}
 					name = name[1 : len(name)-1] // strip off " in the back and /" in front
 					if name != "_" {
-						data.defined[name] = NewType(s)
+						data.defined[name] = TypeDecl(s)
 					}
 				}
 			}
@@ -96,6 +100,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 			fmt.Printf("Unhandled Decl %T %+v", decl, decl)
 		}
 	}
+
 	var resolver Resolver
 	resolver = func(name string) *Type {
 		return data.defined[name]

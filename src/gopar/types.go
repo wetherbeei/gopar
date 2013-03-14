@@ -3,7 +3,9 @@
 // Supports operations on types, such as figuring out the type of a struct
 // field or array access. Also figures out the result of a binary expression
 // between two types, or a dereference (*) or address-of (&) operation.
-
+//
+// Type definitions are fully-defined (Type.final = true), all other types are
+// references to them.
 package main
 
 import (
@@ -13,101 +15,190 @@ import (
 	"go/token"
 )
 
-var builtinIdents map[string]bool = map[string]bool{
-	"bool":      true,
-	"byte":      true,
-	"complex64": true,
+type Type interface {
+	Complete(Resolver)
+	Definition() ast.Node
+	Fields() []string  // return an ordered list of all fields in this type
+	Field(string) Type // return .field's type
+	Dereference() Type // the return type of a *dereference operation
+	Reference() Type   // return type type of a &reference operation
+	IndexKey() Type    // the return type of an [index] or <-chan operation
+	IndexValue() Type
+	Call() []Type   // the return types of calling this type
+	Math(Type) Type // outcome of any math operation with another type
+	String() string // a representation of this type
 }
 
-type TypeCategory uint
+type BaseType struct {
+	ast.Node // definition node
+}
 
-const (
-	UnknownType TypeCategory = iota
-	BasicType
-	ChanType
-	StructType
-	ArrayType
-	SliceType
-	MapType
-	InterfaceType
-	PointerType
-	FuncType
-	ImportType
-)
+func newBaseType(node ast.Node) *BaseType {
+	return &BaseType{Node: node}
+}
 
-type Type struct {
-	ast.Node   // pointer
+func (t *BaseType) Complete(resolver Resolver) {
+	return
+}
+
+func (t *BaseType) Definition() ast.Node {
+	return t.Node
+}
+
+func (t *BaseType) Fields() []string {
+	return nil
+}
+
+func (t *BaseType) Field(name string) Type {
+	return nil
+}
+
+func (t *BaseType) Dereference() Type {
+	return nil
+}
+
+func (t *BaseType) Reference() Type {
+	return nil
+}
+
+func (t *BaseType) IndexKey() Type {
+	return nil
+}
+
+func (t *BaseType) IndexValue() Type {
+	return nil
+}
+
+func (t *BaseType) Call() []Type {
+	return nil
+}
+
+func (t *BaseType) Math(other Type) Type {
+	return nil
+}
+
+func (t *BaseType) String() string {
+	return fmt.Sprintf("Type<%T %v>", t.Node, t.Node)
+}
+
+type StructType struct {
+	BaseType
 	fieldOrder []string
-	fields     map[string]*Type
-	methods    map[string]*Type
+	fields     map[string]Type
 }
 
-// Resolve all first-level fields, but not embedded fields
-func NewType(expr ast.Node) *Type {
-	typ := &Type{Node: expr}
-	if typ.HasFields() {
-		typ.fields = make(map[string]*Type)
-		typ.methods = make(map[string]*Type)
+func newStructType(node ast.Node) *StructType {
+	return &StructType{
+		BaseType:   newBaseType(node),
+		fieldOrder: make([]string, 0),
+		fields:     make(map[string]Type),
 	}
-	return typ
 }
 
-// Finish filling in this type's embedded structures
-func (t *Type) Complete(resolver Resolver) {
-	return
-}
-
-// Add a method to this type
-func (t *Type) AddMethod(name string, method *ast.FuncDecl) {
-	t.methods[name] = NewType(method.Type)
-	return
-}
-
-func (t *Type) Category() TypeCategory {
-	switch n := t.Node.(type) {
-	case *ast.ChanType:
-		return ChanType
+// fill in all struct fields
+func (t *StructType) Complete(resolver Resolver) {
+	switch e := t.Node.(type) {
 	case *ast.StructType:
-		return StructType
-	case *ast.ArrayType:
-		if n.Len != nil {
-			return ArrayType
-		} else {
-			return SliceType
+		for _, field := range e.Fields.List {
+			fieldTyp := TypeOf(field.Type, resolver)
+			// Embedded fields
+			// *Struct1
+			// Struct2
+			// abc.Struct3
+			if len(field.Names) == 0 {
+				var ig IdentifierGroup
+				AccessIdentBuild(&ig, field.Type, nil)
+				name := ig.group[len(ig.group)-1].id
+				t.addField(name, fieldTyp)
+			} else {
+				for _, name := range field.Names {
+					t.addField(name.Name, fieldTyp)
+				}
+			}
 		}
-	case *ast.MapType:
-		return MapType
-	case *ast.InterfaceType:
-		return InterfaceType
-	case *ast.StarExpr:
-		return PointerType
-	case *ast.FuncType:
-		return FuncType
 	}
-	return UnknownType
 }
 
-func (t *Type) HasFields() bool {
-	return (t.Category() == StructType || t.Category() == InterfaceType)
+func (t *StructType) addField(name string, typ *Type) {
+	t.fields[name] = typ
+	t.fieldOrder = append(t.fieldOrder, name)
+	return
 }
 
-// Return all fields of this struct or interface
-func (t *Type) Fields() []string {
-	if t.HasFields() {
-		return t.fieldOrder
+// an array, list, map or chan type
+type IndexedType struct {
+	BaseType
+	key   Type
+	value Type
+}
+
+func newIndexedType(node ast.Node) *IndexedType {
+	return &IndexedType{
+		BaseType: newBaseType(node),
+	}
+}
+
+// fill in key and value sections
+func (t *IndexedType) Complete(resolver Resolver) {
+	return
+}
+
+func (t *IndexedType) IndexKey() Type {
+	return t.key
+}
+
+func (t *IndexedType) IndexValue() Type {
+	return t.value
+}
+
+// a pointer type
+type PointerType struct {
+	BaseType
+	inner Type
+}
+
+func newPointerType(node ast.Node) *PointerType {
+	return &PointerType{
+		BaseType: newBaseType(node),
+	}
+}
+
+// Resolve the inner type
+func (t *PointerType) Complete(resolver Resolver) {
+	return
+}
+
+// a function
+type FuncType struct {
+	BaseType
+	args    []Type
+	results []Type
+}
+
+func newFuncType(node ast.Node) *FuncType {
+	return &FuncType{
+		BaseType: newBaseType(node),
+		args:     make([]Type, 0),
+		results:  make([]Type, 0),
+	}
+}
+
+// Create a new type from a declaration Node
+func TypeDecl(expr ast.Node) Type {
+	switch n := t.Node.(type) {
+	case *ast.ChanType, *ast.ArrayType, *ast.MapType:
+		return newIndexedType(n)
+	case *ast.StructType, *ast.InterfaceType:
+		return newStructType(n)
+	case *ast.StarExpr:
+		return newPointerType(n)
+	case *ast.FuncType:
+		return newFuncType(n)
 	}
 	return nil
 }
 
-// Return the type of a struct or interface
-func (t *Type) Field(name string) *Type {
-	if t.HasFields() {
-		return t.fields[name]
-	}
-	return NewType(nil)
-}
-
-func (t *Type) String() string {
+func (typ *BaseType) String() string {
 	var buffer bytes.Buffer
 	var Format func(cur ast.Node) string
 	Format = func(cur ast.Node) string {
@@ -128,15 +219,9 @@ func (t *Type) String() string {
 			Format(t.X)
 		case *ast.StructType:
 			buffer.WriteString("struct {")
-			for _, field := range t.Fields.List {
-				if len(field.Names) == 0 {
-					Format(field.Type)
-					buffer.WriteString(", ")
-				}
-				for _, name := range field.Names {
-					buffer.WriteString(name.Name)
-					buffer.WriteString(" ")
-					Format(field.Type)
+			for i, field := range typ.Fields() {
+				buffer.WriteString(fmt.Sprintf("%s %v", field, typ.Field(field)))
+				if i != len(typ.Fields())-1 {
 					buffer.WriteString(", ")
 				}
 			}
@@ -190,11 +275,11 @@ func (t *Type) String() string {
 			buffer.WriteString("chan ")
 			Format(t.Value)
 		default:
-			buffer.WriteString(fmt.Sprintf("<%T %+v>", cur, cur))
+			buffer.WriteString(fmt.Sprintf("Type<%T %+v>", cur, cur))
 		}
 		return ""
 	}
-	Format(t.Node)
+	Format(typ.Node)
 	return buffer.String()
 }
 
@@ -202,7 +287,7 @@ func (t *Type) String() string {
 // scopes up to the package level.
 type Resolver func(ident string) *Type
 
-func TypeOf(expr ast.Node, resolver Resolver) *Type {
+func TypeOf(expr ast.Node, resolver Resolver) Type {
 	switch t := expr.(type) {
 	case *ast.CallExpr:
 		var fnType *Type
@@ -210,8 +295,6 @@ func TypeOf(expr ast.Node, resolver Resolver) *Type {
 		case *ast.Ident:
 			if f.Name == "make" {
 				fnType = NewType(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: t.Args[0]}}}})
-			} else if f.Name == "len" {
-				fnType = NewType(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: &ast.Ident{Name: "int"}}}}})
 			} else {
 				fnType = resolver(f.Name)
 			}
