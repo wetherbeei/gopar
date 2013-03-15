@@ -38,6 +38,12 @@ func main() {
 		a := make(chan int)
 		b := <-a
 	}
+	{
+		a := Struct3{}
+		b := a.Struct2
+		c := a.b // TODO: doesn't work, need to promote .b as a field on Struct3
+		d := a.Struct2.b.a
+	}
 }
 
 type Struct1 struct {

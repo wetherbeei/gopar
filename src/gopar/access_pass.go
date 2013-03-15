@@ -92,13 +92,13 @@ func (ig *IdentifierGroup) String() string {
 }
 
 type AccessPassData struct {
-	defines  map[string]*Type  // name: type
+	defines  map[string]Type   // name: type
 	accesses []IdentifierGroup // read/write of an identifier
 }
 
 func NewAccessPassData() *AccessPassData {
 	return &AccessPassData{
-		defines:  make(map[string]*Type),
+		defines:  make(map[string]Type),
 		accesses: make([]IdentifierGroup, 0),
 	}
 }
@@ -106,7 +106,7 @@ func NewAccessPassData() *AccessPassData {
 // Create a resolver for types
 func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 	globalScope := c.GetPassResult(DefinedTypesPassType, nil).(*DefinedTypesData)
-	return func(ident string) *Type {
+	return func(ident string) Type {
 		block.Print("Resolving ident", ident)
 		for child := block; child != nil; child = child.parent {
 			defineData := child.Get(AccessPassType).(*AccessPassData)
@@ -187,13 +187,19 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// Helper functions.
 	Resolver := MakeResolver(b, p, pass.compiler)
 	// Define adds the identifier as being defined in this block
-	Define := func(ident string, expr ast.Expr) {
+	Define := func(ident string, expr interface{}) {
 		if ident == "_" {
 			return
 		}
-		typ := TypeOf(expr, Resolver)
+		var typ Type
+		switch t := expr.(type) {
+		case ast.Expr:
+			typ = TypeOf(t, Resolver)
+		case Type:
+			typ = t
+		}
 		dataBlock.defines[ident] = typ
-		b.Printf("Defined %s = %T %+v", ident, typ, typ)
+		b.Printf("Defined %s = %v", ident, typ)
 	}
 
 	// Access recording:
@@ -336,25 +342,18 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			case token.DEFINE:
 				// multi-assign functions
 				if len(e.Lhs) != len(e.Rhs) {
-					pos := 0
-					fnType := TypeOf(e.Rhs[0], Resolver).Node.(*ast.FuncType)
-					for _, field := range fnType.Results.List {
-						fieldLen := len(field.Names)
-						if fieldLen < 1 {
-							fieldLen = 1
-						}
-						for j := 0; j < fieldLen; j++ {
-							Define(e.Lhs[pos].(*ast.Ident).Name, field.Type)
-							pos++
-						}
+					fnType := TypeOf(e.Rhs[0], Resolver)
+					b.Print("Multi-assign", fnType.Call())
+					for pos, result := range fnType.Call() {
+						Define(e.Lhs[pos].(*ast.Ident).Name, result)
 					}
 				} else {
 					// assign each individually
 					for i, expr := range e.Lhs {
 						if new, ok := expr.(*ast.Ident); ok {
 							// if RHS[i] is a function, it MUST have one return slot
-							if fnType, ok := TypeOf(e.Rhs[i], Resolver).Node.(*ast.FuncType); ok {
-								Define(new.Name, fnType.Results.List[0].Type)
+							if fnType := TypeOf(e.Rhs[i], Resolver); fnType != nil && len(fnType.Call()) == 1 {
+								Define(new.Name, fnType.Call()[0])
 							} else {
 								Define(new.Name, e.Rhs[i])
 							}

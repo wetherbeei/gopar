@@ -102,12 +102,12 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 	}
 
 	var resolver Resolver
-	resolver = func(name string) *Type {
+	resolver = func(name string) Type {
 		return data.defined[name]
 	}
 
 	pass.SetResult(nil, data)
-
+	fmt.Println(data.defined)
 	// fill in embedded fields
 	for _, typ := range data.defined {
 		typ.Complete(resolver)
