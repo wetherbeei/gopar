@@ -96,11 +96,11 @@ func allowedType(t Type) (err error) {
 	return nil
 }
 
-func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
+func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo, err error) {
 	var block *BasicBlock
 	var dependencyData *DependencyPassData
 	var invalidData []string
-	//var definesData *AccessPassData = 
+
 	switch t := loop.node.(type) {
 	case *ast.RangeStmt:
 		idxIdent, ok := t.Key.(*ast.Ident)
@@ -154,16 +154,18 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 		return
 	}
 
-	// Generate a list of all leaked dependencies
-	// Remove the defined key, val variables (use .defined data)
+	// Fill in type d
 	// Check array accesses for [key]
-	loop.Print("== Dependencies ==")
+	blockDefines := block.Get(AccessPassType).(*AccessPassData).defines
 	for _, dep := range dependencyData.deps {
-		loop.Print(dep.String())
+		// ignore variables defined in the loop statement
+		if _, ok := blockDefines[dep.group[0].id]; ok {
+			continue
+		}
+
 		switch dep.depType {
 		case ReadOnly:
 			// nothing
-			info.arguments = append(info.arguments, dep)
 		case ReadWrite, WriteFirst:
 			// each read and write must be indexed by the iteration variable
 			// a[1][idx] ??
@@ -183,22 +185,43 @@ func canParallelize(loop *BasicBlock) (info *ParallelLoopInfo, err error) {
 				err = fmt.Errorf("%s is accessed by all iterations", dep.String())
 				return
 			}
-			info.arguments = append(info.arguments, dep)
 			//case WriteFirst:
-			// only privatize simple variables
+			// TODO: only privatize simple variables
 
 			//info.privatize = append(info.privatize, dep)
 		}
 	}
 
-	// Step up one block level and remove slice accesses to figure out which
-	// slices need to be transfered completely
+	// Generate a list of all leaked dependencies to pass as arguments
+	// Remove the defined key, val variables (use .defined data)
+	for _, dep := range dependencyData.deps {
+		if _, ok := blockDefines[dep.group[0].id]; !ok {
+			// wasn't defined in the loop definition, it's an external dep
+
+			// check if it's index was defined too, usually a[idx]
+			var newDep Dependency = dep
+			for idx, ident := range dep.group {
+				if _, ok := blockDefines[ident.index]; ok && ident.isIndexed {
+					// cut off array at this point
+					newDep.group = make([]Identifier, idx+1)
+					copy(newDep.group, dep.group)
+					newDep.group[idx].isIndexed = false
+					newDep.group[idx].index = ""
+				}
+				break
+			}
+			info.arguments = append(info.arguments, newDep)
+		}
+	}
 
 	// Check types of all arguments
-	for _, dep := range info.arguments {
+
+	for i, dep := range info.arguments {
+		dep.goType = TypeOf(dep.MakeNode(), resolver)
 		if err = allowedType(dep.goType); err != nil {
 			return
 		}
+		info.arguments[i] = dep
 	}
 	return
 }
@@ -211,7 +234,8 @@ func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) Ba
 	}
 	var info *ParallelLoopInfo
 	var err error
-	info, err = canParallelize(block)
+	resolver := MakeResolver(block, p, pass.compiler)
+	info, err = canParallelize(block, resolver)
 
 	if err != nil {
 		block.Printf("\x1b[31;1mCan't parallelize loop\x1b[0m at %s", p.Location(block.node.Pos()))
@@ -221,6 +245,10 @@ func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) Ba
 		info.name = fmt.Sprintf("%s_%d", strings.Replace(strings.Replace(pos.Filename, ".", "_", -1), "/", "_", -1), pos.Line)
 		block.Printf("\x1b[33;1mParallel loop\x1b[0m named %s", info.name)
 		block.Printf("Thread index = '%s'", info.indexVar)
+		block.Printf("Arguments:")
+		for _, arg := range info.arguments {
+			block.Printf("  %s", arg.String())
+		}
 		data.loops[block.node] = info
 	}
 	return DefaultBasicBlockVisitor{}
