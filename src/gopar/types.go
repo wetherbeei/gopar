@@ -26,6 +26,8 @@ type Type interface {
 	Call() []Type                // the return types of calling this type
 	Math(Type, token.Token) Type // outcome of any math operation with another type
 	String() string              // a representation of this type
+	CType() string               // type signature (int* for slice)
+	CDecl() string               // type definition (typedef struct {} something)
 }
 
 type BaseType struct {
@@ -66,6 +68,14 @@ func (t *BaseType) IndexValue() Type {
 
 func (t *BaseType) Call() []Type {
 	return nil
+}
+
+func (t *BaseType) CDecl() string {
+	return ""
+}
+
+func (t *BaseType) CType() string {
+	return ""
 }
 
 func (t *BaseType) Math(other Type, op token.Token) Type {
@@ -198,9 +208,7 @@ func newIndexedType(node ast.Node) *IndexedType {
 func (typ *IndexedType) Complete(resolver Resolver) {
 	switch t := typ.Node.(type) {
 	case *ast.ArrayType:
-		if t.Len != nil {
-			typ.key = TypeOf(t.Len, resolver)
-		}
+		typ.key = TypeOf(&ast.Ident{Name: "int"}, resolver)
 		typ.value = TypeOf(t.Elt, resolver)
 	case *ast.MapType:
 		typ.key = TypeOf(t.Key, resolver)
@@ -460,7 +468,7 @@ func TypeOf(expr ast.Node, resolver Resolver) Type {
 // Helper functions for constructing C/OpenCL structures:
 // http://golang.org/ref/spec#Size_and_alignment_guarantees
 // http://www.khronos.org/registry/cl/sdk/1.1/docs/man/xhtml/attributes-types.html
-// https://code.google.com/p/go/source/browse/src/pkg/go/types/sizes.go
+// https://code.google.com/p/go/source/browse/go/types/sizes.go?repo=exp
 func SizeOf(typ Type) int64 {
 	return 1
 }

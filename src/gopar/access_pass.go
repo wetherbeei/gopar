@@ -294,16 +294,17 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		case *ast.RangeStmt:
 			// only := range
 			if e.Tok == token.DEFINE {
+				rangeTyp := TypeOf(e.X, Resolver)
 				if key, ok := e.Key.(*ast.Ident); ok {
-					// TODO: no support for maps, assumes key is always an array index
-					Define(key.Name, &ast.Ident{Name: "int"})
+					Define(key.Name, rangeTyp.IndexKey())
 				}
 				if val, ok := e.Value.(*ast.Ident); ok {
-					Define(val.Name, e.X)
+					Define(val.Name, rangeTyp.IndexValue())
 				}
 			}
 			// reads from range val
-			AccessExpr(e.X, ReadAccess)
+			// TODO: re-enable this access?
+			//AccessExpr(e.X, ReadAccess)
 			// writes to keys
 			AccessExpr(e.Key, WriteAccess)
 			if e.Value != nil {

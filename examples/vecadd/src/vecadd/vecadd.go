@@ -2,20 +2,21 @@ package main
 
 import "fmt"
 
-func add(a, b []int) {
-	for idx := range a {
+func add(a, b, c []int) {
+	for idx, val := range a {
 		tmp := b[idx]
-		a[idx] += tmp
+		a[idx] = val + tmp + c[tmp]
 	}
 }
 
 func main() {
 	a := make([]int, 1000000)
 	b := make([]int, 1000000)
+	c := make([]int, 1000000)
 	for i := 0; i < len(a); i++ {
 		a[i] = i
 		b[i] = i
 	}
-	add(a, b)
+	add(a, b, c)
 	fmt.Println("done")
 }

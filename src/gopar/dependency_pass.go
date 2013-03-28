@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"go/ast"
 )
 
 type DependencyPass struct {
@@ -46,6 +47,7 @@ func NewDependencyLevel() *DependencyLevel {
 type Dependency struct {
 	group   []Identifier
 	depType DependencyType
+	goType  Type
 }
 
 func (d *Dependency) String() string {
@@ -60,7 +62,28 @@ func (d *Dependency) String() string {
 		buffer.WriteString(".")
 	}
 	buffer.WriteString(dependencyTypeString[d.depType])
+	if d.goType != nil {
+		buffer.WriteString(" ")
+		buffer.WriteString(d.goType.String())
+	}
 	return buffer.String()
+}
+
+// Make a new AST node that represents this dependency identifier group
+func (d *Dependency) MakeNode() ast.Expr {
+	var root ast.Expr
+	// ((a.b)[2]).c
+	for _, i := range d.group {
+		if root == nil {
+			root = &ast.Ident{Name: i.id}
+		} else {
+			root = &ast.SelectorExpr{X: root, Sel: &ast.Ident{Name: i.id}}
+		}
+		if i.isIndexed {
+			root = &ast.IndexExpr{X: root, Index: &ast.Ident{Name: i.index}}
+		}
+	}
+	return root
 }
 
 func ClassifyAccess(prev DependencyType, t AccessType) DependencyType {
@@ -182,9 +205,11 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 		}
 	}
 
+	Resolver := MakeResolver(block, p, pass.compiler)
 	block.Print("== Dependencies ==")
-	for _, dep := range dependencyData.deps {
-		block.Print(dep.String())
+	for i := range dependencyData.deps {
+		dependencyData.deps[i].goType = TypeOf(dependencyData.deps[i].MakeNode(), Resolver)
+		block.Print(dependencyData.deps[i].String())
 	}
 
 	return DefaultBasicBlockVisitor{}
