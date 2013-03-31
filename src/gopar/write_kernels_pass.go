@@ -67,24 +67,17 @@ func NewCWriter() *CWriter {
 }
 
 func (w *CWriter) Writeln(str string) (n int, err error) {
-	return w.Write(str + "\n")
+	io.WriteString(w.writer, strings.Repeat(" ", w.indent))
+	return io.WriteString(w.writer, str+"\n")
 }
 
-// Search for each \n and add "indent" spaces before it
-func (w *CWriter) Write(str string) (n int, err error) {
+func (w *CWriter) Writelns(str string) (n int, err error) {
 	for {
 		index := strings.Index(str, "\n")
 		if index == -1 {
 			break
 		}
-		_, err = io.WriteString(w.writer, str[:index])
-		if err != nil {
-			return
-		}
-		_, err = io.WriteString(w.writer, strings.Repeat(" ", w.indent))
-		if err != nil {
-			return
-		}
+		w.Writeln(str[:index])
 		str = str[index+1:]
 	}
 	return
@@ -102,19 +95,39 @@ func (w *CWriter) String() string {
 	return w.writer.String()
 }
 
+const opencl_header = `
+/* Header */
+
+`
+
 func generateOpenCL(data *ParallelLoopInfo, c *Compiler) (kernel string, err error) {
 	// parse the loop body
 	// - define main kernel function with all args used
-	// - types/data structures
-	// - other functions
+	// - TOOD: types/data structures
+	// - TODO: other functions
 	writer := NewCWriter()
 	writer.Writeln(fmt.Sprintf("/* Generated OpenCL for %s */", data.name))
+	writer.Writelns(opencl_header)
+	writer.Writeln(fmt.Sprintf("__kernel void %s(__global", data.name))
+	writer.Indent()
+	for _, arg := range data.arguments {
+		writer.Writeln(fmt.Sprintf("%s %s,", arg.goType.CType(), arg.group[0].id))
+	}
+	writer.Dedent()
+	writer.Writeln(") {")
+	generateBlock(data.block, writer)
+	writer.Writeln("}")
 	return writer.String(), nil
+}
+
+func generateBlock(block ast.Node, writer *CWriter) {
+	writer.Indent()
+	writer.Writeln("Block")
+	writer.Dedent()
 }
 
 func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	data := pass.compiler.GetPassResult(ParallelizePassType, nil).(*ParallelizeData)
-	//kernel, err := generateOpenCL(data, p)
 
 	for _, loop := range data.loops {
 		loop.kernelSource, err = generateOpenCL(loop, pass.compiler)
@@ -122,6 +135,53 @@ func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modifie
 		if err != nil {
 			return
 		}
+		// if rtlib.HasGPU() {} else {}
+		hasGPU := &ast.IfStmt{
+			Cond: &ast.CallExpr{
+				Fun: &ast.SelectorExpr{
+					X:   &ast.Ident{Name: "rtlib"},
+					Sel: &ast.Ident{Name: "HasGPU"},
+				},
+			},
+		}
+
+		loop.parallel.List = append(loop.parallel.List, hasGPU)
+		hasGPU.Body = &ast.BlockStmt{} // Launch OpenCL
+
+		cpuParBlock := &ast.BlockStmt{}
+		hasGPU.Else = cpuParBlock // Launch multiple goroutines
+		/*
+			var a, b []int
+			rtlib.CPUParallel(func (_idx int) {
+				<loop.variables>
+				a[idx] += b[idx]
+			}, start, stop)
+		*/
+		funcBody := &ast.BlockStmt{}
+		funcBody.List = append(funcBody.List, loop.variables...)
+		funcBody.List = append(funcBody.List, loop.kernel)
+
+		cpuParBlock.List = append(cpuParBlock.List, &ast.ExprStmt{X: &ast.CallExpr{
+			Fun: &ast.SelectorExpr{
+				X:   &ast.Ident{Name: "rtlib"},
+				Sel: &ast.Ident{Name: "CPUParallel"},
+			},
+			Args: []ast.Expr{
+				&ast.FuncLit{
+					Type: &ast.FuncType{
+						Params: &ast.FieldList{List: []*ast.Field{
+							&ast.Field{
+								Names: []*ast.Ident{&ast.Ident{Name: "_idx"}},
+								Type:  &ast.Ident{Name: "int"},
+							},
+						}},
+					},
+					Body: funcBody,
+				},
+				loop.start,
+				loop.stop,
+			},
+		}})
 	}
 	return
 }

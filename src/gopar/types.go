@@ -70,12 +70,14 @@ func (t *BaseType) Call() []Type {
 	return nil
 }
 
+// The declaration of the type, such as "typedef Pixel struct {}"
 func (t *BaseType) CDecl() string {
-	return ""
+	return "UNKNOWN DECL"
 }
 
+// The name of the type, such as "*Pixel" or "int32[]"
 func (t *BaseType) CType() string {
-	return ""
+	return "UNKNOWN TYPE"
 }
 
 func (t *BaseType) Math(other Type, op token.Token) Type {

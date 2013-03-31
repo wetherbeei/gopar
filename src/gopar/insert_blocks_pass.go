@@ -62,7 +62,7 @@ func (v InsertBlockVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	newBlock.List = append(newBlock.List, &ast.AssignStmt{
 		Tok: token.DEFINE,
 		Lhs: []ast.Expr{&ast.Ident{Name: "__parallel"}},
-		Rhs: []ast.Expr{&ast.Ident{Name: "false"}},
+		Rhs: []ast.Expr{&ast.Ident{Name: "true"}},
 	})
 	testBlock := &ast.BlockStmt{}
 	newBlock.List = append(newBlock.List, testBlock)
@@ -106,7 +106,13 @@ func (pass *InsertBlocksPass) GetDependencies() []PassType {
 
 func (pass *InsertBlocksPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	data := pass.compiler.GetPassResult(ParallelizePassType, nil).(*ParallelizeData)
-	v := InsertBlockVisitor{data: data}
-	ast.Walk(v, p.file)
+	if len(data.loops) > 0 {
+		rtimport := &ast.GenDecl{Tok: token.IMPORT, Specs: []ast.Spec{&ast.ImportSpec{Path: &ast.BasicLit{Kind: token.STRING, Value: `"rtlib"`}}}}
+		file.Decls = append(file.Decls, nil)
+		copy(file.Decls[2:], file.Decls[1:])
+		file.Decls[1] = rtimport
+		v := InsertBlockVisitor{data: data}
+		ast.Walk(v, p.file)
+	}
 	return // TODO: return true??
 }

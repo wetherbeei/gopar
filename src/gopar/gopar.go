@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -62,11 +64,14 @@ func main() {
 		panic(err)
 	}
 
+	goparPath, _ := exec.LookPath(os.Args[0])
+	goparRoot, _ := filepath.Abs(path.Clean(path.Dir(goparPath) + "/../"))
 	cmd := exec.Command("go", compilecmd, compilepkg)
 	env := os.Environ()
 	for i, _ := range env {
 		if strings.HasPrefix(env[i], "GOPATH=") {
-			env[i] = os.ExpandEnv(fmt.Sprintf("GOPATH=%s:${GOPATH}", dir))
+			env[i] = os.ExpandEnv(fmt.Sprintf("GOPATH=%s:%s:${GOPATH}", dir, goparRoot))
+			fmt.Println(env[i])
 		}
 	}
 	cmd.Env = env

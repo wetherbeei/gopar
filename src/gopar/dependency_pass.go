@@ -205,10 +205,8 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 		}
 	}
 
-	Resolver := MakeResolver(block, p, pass.compiler)
 	block.Print("== Dependencies ==")
 	for i := range dependencyData.deps {
-		dependencyData.deps[i].goType = TypeOf(dependencyData.deps[i].MakeNode(), Resolver)
 		block.Print(dependencyData.deps[i].String())
 	}
 

@@ -21,6 +21,12 @@ func PrintDebug() {
 }
 
 // On startup, (parse arguments?), pick a device to run on
-func init() {
+var GPUDevice *cl.Context
 
+func init() {
+	GPUDevice = nil
+}
+
+func HasGPU() bool {
+	return GPUDevice != nil
 }

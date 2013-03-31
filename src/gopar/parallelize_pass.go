@@ -28,8 +28,7 @@ type ParallelLoopInfo struct {
 	indexVar  string       // the unique index for iterating ex: idx in (for idx := range slice {})
 	arguments []Dependency // variables to be copied to/from the kernel
 	//privatize   []Dependency // variables to be privatized for each loop
-	start, stop ast.Expr   // an expression representing the number of iterations, inclusive
-	step        ast.Expr   // an expression for the step, "idx" will be replaced with the thread index
+	start, stop ast.Expr   // an expression representing the number of iterations, inclusive start, exclusive stop
 	variables   []ast.Stmt // values to set for each loop iteration, including the index and value vars
 	// these variables hold references to ast blocks for inserting new code
 	//
@@ -43,8 +42,9 @@ type ParallelLoopInfo struct {
 	//   }
 	// }
 	block, tests, parallel *ast.BlockStmt
-	sequential             ast.Stmt // the original node
-	kernelSource           string   // the generated OpenCL source
+	sequential             ast.Stmt       // the original node
+	kernel                 *ast.BlockStmt // the kernel to be generated
+	kernelSource           string         // the generated OpenCL source
 }
 
 type ParallelizeData struct {
@@ -105,6 +105,7 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 	case *ast.RangeStmt:
 		idxIdent, ok := t.Key.(*ast.Ident)
 		if !ok {
+			err = fmt.Errorf("Range must have an explicit index variable")
 			return
 		}
 		//block = loop.children[0]
@@ -119,18 +120,20 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 				Kind:  token.INT,
 				Value: "0",
 			},
-			// len(X)-1
-			stop: &ast.BinaryExpr{
-				X: &ast.CallExpr{
-					Fun:  &ast.Ident{Name: "len"},
-					Args: []ast.Expr{t.X},
-				},
-				Y:  &ast.BasicLit{Kind: token.INT, Value: "-1"},
-				Op: token.SUB,
+			// len(X)
+			stop: &ast.CallExpr{
+				Fun:  &ast.Ident{Name: "len"},
+				Args: []ast.Expr{t.X},
 			},
-			step: &ast.Ident{
-				Name: "idx", // no step for range statements
-			},
+			kernel: t.Body,
+		}
+
+		if t.Key != nil {
+			info.variables = append(info.variables, &ast.AssignStmt{
+				Lhs: []ast.Expr{idxIdent},
+				Rhs: []ast.Expr{&ast.Ident{Name: "_idx"}},
+				Tok: token.DEFINE,
+			})
 		}
 
 		// set value variable
@@ -141,7 +144,7 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 					X:     t.X,
 					Index: idxIdent,
 				}},
-				Tok: token.ASSIGN,
+				Tok: token.DEFINE,
 			})
 		}
 	// case *ast.ForStmt:
@@ -214,8 +217,18 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 		}
 	}
 
-	// Check types of all arguments
+	// Check for a.b.c arguments (TODO remove this requirement)
+	for _, dep := range info.arguments {
+		if len(dep.group) > 1 {
+			err = fmt.Errorf("Selectors not allowed as arguments: %s", dep.String())
+			return
+		}
+		if dep.group[0].isIndexed {
+			err = fmt.Errorf("Index expressions not allowed as arguments: %s", dep.String())
+		}
+	}
 
+	// Check types of all arguments
 	for i, dep := range info.arguments {
 		dep.goType = TypeOf(dep.MakeNode(), resolver)
 		if err = allowedType(dep.goType); err != nil {
