@@ -11,6 +11,8 @@ import (
 	"go/token"
 )
 
+const GOPAR_RTLIB = "gopar_rtlib"
+
 type InsertBlockVisitor struct {
 	data   *ParallelizeData
 	parent ast.Node
@@ -107,7 +109,7 @@ func (pass *InsertBlocksPass) GetDependencies() []PassType {
 func (pass *InsertBlocksPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	data := pass.compiler.GetPassResult(ParallelizePassType, nil).(*ParallelizeData)
 	if len(data.loops) > 0 {
-		rtimport := &ast.GenDecl{Tok: token.IMPORT, Specs: []ast.Spec{&ast.ImportSpec{Path: &ast.BasicLit{Kind: token.STRING, Value: `"rtlib"`}}}}
+		rtimport := &ast.GenDecl{Tok: token.IMPORT, Specs: []ast.Spec{&ast.ImportSpec{Name: &ast.Ident{Name: GOPAR_RTLIB}, Path: &ast.BasicLit{Kind: token.STRING, Value: `"rtlib"`}}}}
 		file.Decls = append(file.Decls, nil)
 		copy(file.Decls[2:], file.Decls[1:])
 		file.Decls[1] = rtimport

@@ -54,7 +54,7 @@ func (pass *WriteKernelsPass) GetPassMode() PassMode {
 }
 
 func (pass *WriteKernelsPass) GetDependencies() []PassType {
-	return []PassType{ParallelizePassType}
+	return []PassType{InsertBlocksPassType}
 }
 
 type CWriter struct {
@@ -139,7 +139,7 @@ func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modifie
 		hasGPU := &ast.IfStmt{
 			Cond: &ast.CallExpr{
 				Fun: &ast.SelectorExpr{
-					X:   &ast.Ident{Name: "rtlib"},
+					X:   &ast.Ident{Name: GOPAR_RTLIB},
 					Sel: &ast.Ident{Name: "HasGPU"},
 				},
 			},
@@ -163,7 +163,7 @@ func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modifie
 
 		cpuParBlock.List = append(cpuParBlock.List, &ast.ExprStmt{X: &ast.CallExpr{
 			Fun: &ast.SelectorExpr{
-				X:   &ast.Ident{Name: "rtlib"},
+				X:   &ast.Ident{Name: GOPAR_RTLIB},
 				Sel: &ast.Ident{Name: "CPUParallel"},
 			},
 			Args: []ast.Expr{

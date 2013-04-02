@@ -15,25 +15,13 @@ type DefinedTypesData struct {
 }
 
 func NewDefinedTypesData() *DefinedTypesData {
-	builtin := []string{
-		"uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64",
-		"float32", "float64", "complex64", "complex128", "uint", "int", "uintptr",
-		"rune", "byte", "string", "bool", // aliases
-	}
 	d := &DefinedTypesData{
 		defined: make(map[string]Type),
 	}
-	for _, ident := range builtin {
-		d.defined[ident] = TypeDecl(&ast.Ident{Name: ident})
+
+	for k, v := range BuiltinTypes {
+		d.defined[k] = v
 	}
-
-	d.defined["true"] = d.defined["bool"]
-	d.defined["false"] = d.defined["bool"]
-	d.defined["iota"] = d.defined["int"]
-
-	// builtin functions
-	d.defined["len"] = TypeDecl(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: &ast.Ident{Name: "int"}}}}})
-	// make is handled dynamically in types.go:TypeOf
 	return d
 }
 

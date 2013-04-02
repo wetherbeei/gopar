@@ -8,10 +8,14 @@
 package rtlib
 
 import (
-	"math"
+	"fmt"
 	"runtime"
 	"sync"
 )
+
+func init() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+}
 
 type ParallelFunc func(int)
 
@@ -19,20 +23,18 @@ func CPUParallel(f ParallelFunc, start, stop int) {
 	var wg sync.WaitGroup
 
 	cpus := runtime.NumCPU()
-	iterations := start - stop
-	perCPU := int(math.Ceil(float64(iterations) / float64(cpus)))
-
+	iterations := stop - start
+	fmt.Println("CPUParallel", cpus, "iters", iterations)
 	for i := 0; i < cpus; i++ {
 		wg.Add(1)
-		go func() {
-			for j := perCPU * i; j < perCPU*(i+1); j++ {
-				idx := j + start
-				if idx < stop {
-					f(idx)
-				}
+		go func(i int) {
+			offset := start + i
+			for idx := offset; idx < stop; idx = idx + cpus {
+				f(idx)
 			}
 			wg.Done()
-		}()
+		}(i)
 	}
 	wg.Wait()
+	return
 }

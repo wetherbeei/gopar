@@ -10,9 +10,9 @@ func add(a, b, c []int, d int) {
 }
 
 func main() {
-	a := make([]int, 1000)
-	b := make([]int, 1000)
-	c := make([]int, 1000)
+	a := make([]int, 1000000)
+	b := make([]int, 1000000)
+	c := make([]int, 1000000)
 	for i := 0; i < len(a); i++ {
 		a[i] = i
 		b[i] = i

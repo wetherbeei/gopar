@@ -15,6 +15,29 @@ import (
 	"go/token"
 )
 
+var BuiltinTypes map[string]Type
+
+func init() {
+	BuiltinTypes = make(map[string]Type, 0)
+
+	builtin := []string{
+		"uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64",
+		"float32", "float64", "complex64", "complex128", "uint", "int", "uintptr",
+		"rune", "byte", "string", "bool", // aliases
+	}
+	for _, ident := range builtin {
+		BuiltinTypes[ident] = TypeDecl(&ast.Ident{Name: ident})
+	}
+
+	BuiltinTypes["true"] = BuiltinTypes["bool"]
+	BuiltinTypes["false"] = BuiltinTypes["bool"]
+	BuiltinTypes["iota"] = BuiltinTypes["int"]
+
+	// builtin functions
+	BuiltinTypes["len"] = TypeDecl(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: &ast.Ident{Name: "int"}}}}})
+	// make is handled dynamically in types.go:TypeOf
+}
+
 type Type interface {
 	Complete(Resolver)
 	Definition() ast.Node
@@ -379,7 +402,28 @@ func (t *PackageType) String() string {
 
 // The outcome of a binary operation
 func BinaryOp(X Type, op token.Token, Y Type) Type {
-	// TODO: finish this
+	switch op {
+	case token.LAND, token.LOR, token.NEQ, token.LEQ, token.GEQ, token.EQL,
+		token.LSS, token.GTR:
+		return BuiltinTypes["bool"]
+	default:
+		// Binary operations are always between two of the same types, unless
+		// shifting. Untyped constants are converted to the type of the other
+		// operand
+		_, xConst := X.(*ConstType)
+		_, yConst := Y.(*ConstType)
+		switch {
+		case !xConst && !yConst:
+			return X
+		case xConst && !yConst:
+			return X
+		case yConst && !xConst:
+			return Y
+		default:
+			// TODO: see http://golang.org/ref/spec#Constant_expressions
+			return X
+		}
+	}
 	return nil
 }
 
@@ -416,6 +460,10 @@ func TypeOf(expr ast.Node, resolver Resolver) Type {
 			if f.Name == "make" {
 				fnType = newFuncType(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: t.Args[0]}}}})
 				fnType.Complete(resolver)
+			} else if builtin, ok := BuiltinTypes[f.Name]; ok {
+				// type conversion
+				// int32(x)
+				return builtin
 			} else {
 				fnType = resolver(f.Name)
 			}
@@ -436,14 +484,19 @@ func TypeOf(expr ast.Node, resolver Resolver) Type {
 		return indexer.IndexValue()
 	case *ast.UnaryExpr:
 		// &something
-		if t.Op == token.AND {
+		switch t.Op {
+		case token.AND:
 			refTyp := newPointerType(&ast.StarExpr{X: t.X})
 			refTyp.Complete(resolver)
 			return refTyp
-		} else if t.Op == token.ARROW {
+		// <-chan
+		case token.ARROW:
 			chanTyp := TypeOf(t.X, resolver)
 			return chanTyp.IndexValue()
+		case token.NOT:
+			return BuiltinTypes["bool"]
 		}
+		return TypeOf(t, resolver)
 	case *ast.StarExpr:
 		ptrType := TypeOf(t.X, resolver)
 		return ptrType.Dereference()
@@ -453,7 +506,9 @@ func TypeOf(expr ast.Node, resolver Resolver) Type {
 	case *ast.BinaryExpr:
 		xTyp := TypeOf(t.X, resolver)
 		yTyp := TypeOf(t.Y, resolver)
-		return xTyp.Math(yTyp, t.Op)
+		result := xTyp.Math(yTyp, t.Op)
+		fmt.Println(result, "=", xTyp.String(), t.Op, yTyp.String())
+		return result
 	case *ast.ArrayType, *ast.ChanType, *ast.MapType:
 		indexTyp := newIndexedType(t)
 		indexTyp.Complete(resolver)
