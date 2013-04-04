@@ -6,6 +6,9 @@ package main
 // AST. Passes are run until all passes have completed without modifying the
 // AST.
 //
+// Only one Compiler per Project is created, and it can be run multiple times
+// with different Packages.
+//
 import (
 	"fmt"
 	"go/ast"
@@ -53,18 +56,18 @@ type Pass interface {
 	RunBasicBlockPass(*BasicBlock, *Package) BasicBlockVisitor
 
 	// Defined by BasePass
-	GetResult(ast.Node) interface{}
-	SetResult(ast.Node, interface{})
+	GetResult(interface{}) interface{}
+	SetResult(interface{}, interface{})
 	Reset()
 }
 
 type BasePass struct {
-	analysis map[ast.Node]interface{}
+	analysis map[interface{}]interface{}
 	compiler *Compiler
 }
 
 func NewBasePass() BasePass {
-	return BasePass{analysis: make(map[ast.Node]interface{})}
+	return BasePass{analysis: make(map[interface{}]interface{})}
 }
 
 func (pass *BasePass) GetBase() *BasePass {
@@ -75,16 +78,16 @@ func (pass *BasePass) GetCompiler() *Compiler {
 	return pass.compiler
 }
 
-func (pass *BasePass) GetResult(node ast.Node) (analysis interface{}) {
-	return pass.analysis[node]
+func (pass *BasePass) GetResult(v interface{}) (analysis interface{}) {
+	return pass.analysis[v]
 }
 
-func (pass *BasePass) SetResult(node ast.Node, i interface{}) {
-	pass.analysis[node] = i
+func (pass *BasePass) SetResult(v interface{}, i interface{}) {
+	pass.analysis[v] = i
 }
 
 func (pass *BasePass) Reset() {
-	pass.analysis = make(map[ast.Node]interface{})
+	pass.analysis = make(map[interface{}]interface{})
 }
 
 func (pass *BasePass) RunModulePass(file *ast.File, p *Package) (bool, error) {
@@ -123,7 +126,7 @@ func (pass *BasePass) RunBasicBlockPass(b *BasicBlock, p *Package) BasicBlockVis
 
 type Compiler struct {
 	project          *Project
-	passStatus       map[PassType]bool
+	passStatus       map[*Package]map[PassType]bool
 	passes           map[PassType]Pass
 	passDependencies map[PassType][]PassType
 }
@@ -131,7 +134,7 @@ type Compiler struct {
 func NewCompiler(project *Project) *Compiler {
 	return &Compiler{
 		project:          project,
-		passStatus:       make(map[PassType]bool),
+		passStatus:       make(map[*Package]map[PassType]bool),
 		passes:           make(map[PassType]Pass),
 		passDependencies: make(map[PassType][]PassType),
 	}
@@ -142,12 +145,11 @@ func (c *Compiler) AddPass(pass Pass) {
 	bp.compiler = c
 	var t PassType = pass.GetPassType()
 	c.passes[t] = pass
-	c.passStatus[t] = false
 	c.passDependencies[t] = pass.GetDependencies()
 }
 
-func (c *Compiler) GetPassResult(t PassType, node ast.Node) interface{} {
-	return c.passes[t].GetResult(node)
+func (c *Compiler) GetPassResult(t PassType, v interface{}) interface{} {
+	return c.passes[t].GetResult(v)
 }
 
 func (c *Compiler) ResetPass(t PassType) {
@@ -155,38 +157,42 @@ func (c *Compiler) ResetPass(t PassType) {
 }
 
 // Run all passes while dependencies are met
-func (c *Compiler) Run() (err error) {
+func (c *Compiler) Run(pkg *Package) (err error) {
+	fmt.Printf("\x1b[32;1mRunning package %s\x1b[0m\n", pkg.name)
+	passStatus := c.passStatus[pkg]
+	if passStatus == nil {
+		passStatus = make(map[PassType]bool)
+		c.passStatus[pkg] = passStatus
+	}
 	for {
 		for t, passDeps := range c.passDependencies {
-			if c.passStatus[t] {
+			if passStatus[t] {
 				continue
 			}
 			var canRun bool = true
 			for _, dep := range passDeps {
-				canRun = canRun && c.passStatus[dep]
+				canRun = canRun && passStatus[dep]
 			}
 			if canRun {
 				fmt.Println(strings.Repeat("-", 80))
 				fmt.Printf("\x1b[32;1mRunning %T\x1b[0m\n", c.passes[t])
 				var modified bool
-				modified, err = c.RunPass(c.passes[t])
+				modified, err = c.RunPass(c.passes[t], pkg)
 				if err != nil {
 					return
 				}
 				if modified {
-					for i, _ := range c.passStatus {
-						c.passStatus[i] = false
+					for i, _ := range passStatus {
+						passStatus[i] = false
 						c.ResetPass(i)
 					}
 				} else {
-					c.passStatus[t] = true
+					passStatus[t] = true
 				}
-			} else {
-				fmt.Printf("Can't run %T yet\n", c.passes[t])
 			}
 		}
 		var allDone bool = true
-		for t, done := range c.passStatus {
+		for t, done := range passStatus {
 			fmt.Printf("Status %T = %t\n", c.passes[t], done)
 			allDone = allDone && done
 		}
@@ -240,18 +246,16 @@ func RunBasicBlock(pass Pass, root *BasicBlock, p *Package) (modified bool, err 
 	return n.modified, n.err
 }
 
-func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
-	// TODO: only does main package so far
-	pkg := c.project.get("main")
+func (c *Compiler) RunPass(pass Pass, pkg *Package) (modified bool, err error) {
 	switch pass.GetPassMode() {
 	case ModulePassMode:
 		return pass.RunModulePass(pkg.file, pkg)
 	case FunctionPassMode:
-		for _, obj := range pkg.TopLevel() {
-			if obj.Kind == ast.Fun {
-				fmt.Println("\x1b[32;1mFunctionPass\x1b[0m", obj.Decl.(*ast.FuncDecl).Name)
+		for _, decl := range pkg.file.Decls {
+			if fnDecl, ok := decl.(*ast.FuncDecl); ok {
+				fmt.Println("\x1b[32;1mFunctionPass\x1b[0m", fnDecl.Name)
 				var passMod bool
-				passMod, err = pass.RunFunctionPass(obj.Decl.(*ast.FuncDecl), pkg)
+				passMod, err = pass.RunFunctionPass(fnDecl, pkg)
 				modified = modified || passMod
 				if err != nil {
 					return
@@ -259,10 +263,10 @@ func (c *Compiler) RunPass(pass Pass) (modified bool, err error) {
 			}
 		}
 	case BasicBlockPassMode:
-		for _, obj := range pkg.TopLevel() {
-			if obj.Kind == ast.Fun {
+		for _, decl := range pkg.file.Decls {
+			if fnDecl, ok := decl.(*ast.FuncDecl); ok {
 				var passMod bool
-				b := c.GetPassResult(BasicBlockPassType, obj.Decl.(*ast.FuncDecl)).(*BasicBlock)
+				b := c.GetPassResult(BasicBlockPassType, fnDecl).(*BasicBlock)
 				passMod, err = RunBasicBlock(pass, b, pkg)
 				modified = modified || passMod
 				if err != nil {

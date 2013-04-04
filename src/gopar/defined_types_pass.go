@@ -50,27 +50,30 @@ func (pass *DefinedTypesPass) GetDependencies() []PassType {
 func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	data := NewDefinedTypesData()
 	var methods []*ast.FuncDecl
+	var defined map[string]Type = make(map[string]Type)
 	for _, decl := range file.Decls {
 		switch t := decl.(type) {
 		case *ast.FuncDecl:
 			if t.Recv != nil {
 				methods = append(methods, t)
 			} else {
-				data.defined[t.Name.Name] = TypeDecl(t.Type)
+				defined[t.Name.Name] = TypeDecl(t)
 			}
 		case *ast.GenDecl:
 			for _, spec := range t.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
 					var name = s.Name.Name
-					data.defined[name] = TypeDecl(s.Type)
+					defined[name] = TypeDecl(s.Type)
 				case *ast.ImportSpec:
 					var name string
+					var path string
 					if s.Name != nil {
 						name = s.Name.Name
+						path = name
 					} else {
 						// pull from import path
-						path := s.Path.Value
+						path = s.Path.Value
 						idx := strings.LastIndex(path, "/")
 						if idx == -1 {
 							name = path
@@ -78,9 +81,26 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 							name = path[idx:]
 						}
 					}
-					name = name[1 : len(name)-1] // strip off " in the back and /" in front
+					name = name[1 : len(name)-1] // strip off ["] in the back and [/"] in front
 					if name != "_" {
-						data.defined[name] = TypeDecl(s)
+						// attach the types found in the other package here
+						otherPackage := pass.compiler.project.get(path)
+						otherPackageTypes, ok := pass.compiler.GetPassResult(DefinedTypesPassType, otherPackage).(*DefinedTypesData)
+
+						var packageResolver Resolver
+						if ok {
+							packageResolver = func(name string) Type {
+								return otherPackageTypes.defined[name]
+							}
+						} else {
+							// package not found
+							fmt.Println("Package not found:", path)
+							packageResolver = func(name string) Type {
+								return nil
+							}
+						}
+						defined[name] = TypeDecl(s)
+						defined[name].Complete(packageResolver)
 					}
 				}
 			}
@@ -89,22 +109,25 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 		}
 	}
 
-	var resolver Resolver
-	resolver = func(name string) Type {
-		return data.defined[name]
-	}
-
-	pass.SetResult(nil, data)
+	pass.SetResult(p, data)
 	fmt.Println(data.defined)
+
+	resolver := MakeResolver(nil, p, pass.compiler)
 	// fill in embedded fields
-	for _, typ := range data.defined {
+	for name, typ := range defined {
 		typ.Complete(resolver)
+		data.defined[name] = typ
 	}
 
 	// fill in methods
-	//for _, method := range methods {
-	//NewType(method.Recv.List[0].Type)
-	//}
+	for _, method := range methods {
+		recvTyp := TypeOfDecl(method.Recv.List[0].Type, resolver)
+
+		methodTyp := newMethodType(method.Type, method, recvTyp)
+		methodTyp.Complete(resolver)
+		fmt.Printf("Adding method %+v to %+v\n", method, methodTyp)
+		recvTyp.AddMethod(method.Name.Name, methodTyp)
+	}
 
 	for name, typ := range data.defined {
 		fmt.Printf("%s = %v\n", name, typ)

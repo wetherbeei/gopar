@@ -24,7 +24,6 @@
 package main
 
 import (
-	"fmt"
 	"go/ast"
 )
 
@@ -35,6 +34,7 @@ type AccessPassFuncPropogate struct {
 type AccessPassFuncPropogateVisitor struct {
 	pass      Pass
 	p         *Package
+	compiler  *Compiler
 	cur       *BasicBlock
 	dataBlock *AccessPassData
 	node      ast.Node
@@ -60,12 +60,15 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	dataBlock := v.dataBlock
 	b := v.cur
 	pass := v.pass
+	resolver := MakeResolver(b, v.p, v.compiler)
 	if node == nil {
 		// post-order actions (all sub-nodes have been visited)
 		node = v.node
 		// Locate function calls
 		switch t := node.(type) {
 		case *ast.CallExpr:
+			typ := TypeOf(t.Fun, resolver)
+			b.Print(typ.String())
 			switch f := t.Fun.(type) {
 			case *ast.FuncLit:
 				// go down a FuncLit branch
@@ -276,10 +279,10 @@ func (pass *AccessPassFuncPropogate) RunBasicBlockPass(block *BasicBlock, p *Pac
 }
 
 func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
-	callGraph := pass.compiler.GetPassResult(CallGraphPassType, nil).(*CallGraphPassData)
-	run := make(map[string]bool) // which functions have been propogated
-	var orderGraph func(map[string][]string, string) []string
-	orderGraph = func(graph map[string][]string, f string) (result []string) {
+	callGraph := pass.compiler.GetPassResult(CallGraphPassType, p).(*CallGraphPassData)
+	run := make(map[*ast.BlockStmt]bool) // which functions have been propogated
+	var orderGraph func(map[*ast.BlockStmt][]*ast.BlockStmt, *ast.BlockStmt) []*ast.BlockStmt
+	orderGraph = func(graph map[*ast.BlockStmt][]*ast.BlockStmt, f *ast.BlockStmt) (result []*ast.BlockStmt) {
 		for _, fn := range callGraph.graph[f] {
 			result = append(result, orderGraph(graph, fn)...)
 		}
@@ -287,14 +290,18 @@ func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (
 		return
 	}
 
-	runOrder := orderGraph(callGraph.graph, "main")
-	fmt.Println(runOrder)
-	for _, fnName := range runOrder {
-		fn := p.Lookup(fnName)
-		if fn == nil || run[fnName] {
+	// spit out every function in the call graph with all of their dependencies
+	// listed before them...you can start from the "main" function for the main
+	// package, but supporting packages don't have a single entry point
+	var runOrder []*ast.BlockStmt
+	for k, _ := range callGraph.graph {
+		fnOrder := orderGraph(callGraph.graph, k)
+		runOrder = append(runOrder, fnOrder...)
+	}
+	for _, fnDecl := range runOrder {
+		if fnDecl == nil || run[fnDecl] {
 			continue
 		}
-		fnDecl := fn.Decl.(*ast.FuncDecl)
 		block := pass.compiler.GetPassResult(BasicBlockPassType, fnDecl).(*BasicBlock)
 
 		// Manually run the basic block pass in inverse call graph order
@@ -304,7 +311,7 @@ func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (
 		if err != nil {
 			return
 		}
-		run[fnName] = true
+		run[fnDecl] = true
 	}
 	return
 }

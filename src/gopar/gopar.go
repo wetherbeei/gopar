@@ -27,40 +27,93 @@ func main() {
 	//defer os.RemoveAll(dir)
 
 	project := NewProject(compilepkg)
-	err = project.load(compilepkg)
 
+	var importGraph func(string) ([]string, error)
+	importGraph = func(pkgPath string) (result []string, err error) {
+		if exists := project.get(pkgPath); exists != nil {
+			return
+		}
+		err = project.load(pkgPath)
+		if err != nil {
+			return
+		}
+		fmt.Println(pkgPath)
+		var packageImports []string
+		pkg := project.get(pkgPath)
+		if pkg == nil {
+			return
+		}
+		fmt.Println("->", pkg.Imports())
+		for _, i := range pkg.Imports() {
+			packageImports, err = importGraph(i)
+			if err != nil {
+				return
+			}
+
+			result = append(result, packageImports...)
+		}
+		result = append(result, pkgPath)
+		return
+	}
+	// Generate an import dependency graph of all used packages
+	var importOrder []string
+	importOrder, err = importGraph(compilepkg)
 	if err != nil {
 		panic(err)
 	}
 
-	mainPkg := project.get("main")
-	if mainPkg == nil {
+	fmt.Println(importOrder)
+
+	mainPkg := project.get(compilepkg)
+	if mainPkg.name != "main" {
 		panic(fmt.Errorf("%s is not a main package", compilepkg))
 	}
 
-	showGraph(project)
+	AddAnalysisPasses := func(compiler *Compiler) {
+		compiler.AddPass(NewDefinedTypesPass())
+		compiler.AddPass(NewBasicBlockPass())
+		compiler.AddPass(NewInvalidConstructPass())
+		compiler.AddPass(NewCallGraphPass())
+		// analysis starts
+		compiler.AddPass(NewAccessPass())
+		compiler.AddPass(NewAccessPassPropogate())
+		compiler.AddPass(NewAccessPassFuncPropogate())
+		compiler.AddPass(NewDependencyPass())
+	}
 
+	AddParallelizePasses := func(compiler *Compiler) {
+		compiler.AddPass(NewParallelizePass())
+		// modification starts
+		compiler.AddPass(NewInsertBlocksPass())
+		compiler.AddPass(NewWriteKernelsPass())
+	}
+
+	// analyze all of the used packages
+	var analyzed map[string]bool = make(map[string]bool)
 	compiler := NewCompiler(project)
-	compiler.AddPass(NewDefinedTypesPass())
-	compiler.AddPass(NewBasicBlockPass())
-	compiler.AddPass(NewInvalidConstructPass())
-	compiler.AddPass(NewCallGraphPass())
-	// analysis starts
-	compiler.AddPass(NewAccessPass())
-	compiler.AddPass(NewAccessPassPropogate())
-	compiler.AddPass(NewAccessPassFuncPropogate())
-	compiler.AddPass(NewDependencyPass())
-	compiler.AddPass(NewParallelizePass())
-	// modification starts
-	compiler.AddPass(NewInsertBlocksPass())
-	compiler.AddPass(NewWriteKernelsPass())
-	// pick parallel loops
-	err = compiler.Run()
+	AddAnalysisPasses(compiler)
 
-	//showGraph(project)
+	for _, pkgPath := range importOrder {
+		if analyzed[pkgPath] {
+			continue
+		}
+		//showGraph(project, pkgPath)
 
-	err = project.write(dir)
-	if err != nil {
+		pkg := project.get(pkgPath)
+		err = compiler.Run(pkg)
+		if err != nil {
+			panic(err)
+		}
+		analyzed[pkgPath] = true
+	}
+
+	// modify the main package
+	AddParallelizePasses(compiler)
+	if err = compiler.Run(mainPkg); err != nil {
+		panic(err)
+	}
+
+	if err = project.write(dir, mainPkg); err != nil {
 		panic(err)
 	}
 

@@ -241,9 +241,9 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 
 func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
 	var data *ParallelizeData
-	if data, _ = pass.GetResult(nil).(*ParallelizeData); data == nil {
+	if data, _ = pass.GetResult(p).(*ParallelizeData); data == nil {
 		data := NewParallelizeData()
-		pass.SetResult(nil, data)
+		pass.SetResult(p, data)
 	}
 	var info *ParallelLoopInfo
 	var err error

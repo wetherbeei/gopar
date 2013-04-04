@@ -127,7 +127,7 @@ func generateBlock(block ast.Node, writer *CWriter) {
 }
 
 func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
-	data := pass.compiler.GetPassResult(ParallelizePassType, nil).(*ParallelizeData)
+	data := pass.compiler.GetPassResult(ParallelizePassType, p).(*ParallelizeData)
 
 	for _, loop := range data.loops {
 		loop.kernelSource, err = generateOpenCL(loop, pass.compiler)

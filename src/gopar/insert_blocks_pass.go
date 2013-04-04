@@ -107,7 +107,7 @@ func (pass *InsertBlocksPass) GetDependencies() []PassType {
 }
 
 func (pass *InsertBlocksPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
-	data := pass.compiler.GetPassResult(ParallelizePassType, nil).(*ParallelizeData)
+	data := pass.compiler.GetPassResult(ParallelizePassType, p).(*ParallelizeData)
 	if len(data.loops) > 0 {
 		rtimport := &ast.GenDecl{Tok: token.IMPORT, Specs: []ast.Spec{&ast.ImportSpec{Name: &ast.Ident{Name: GOPAR_RTLIB}, Path: &ast.BasicLit{Kind: token.STRING, Value: `"rtlib"`}}}}
 		file.Decls = append(file.Decls, nil)

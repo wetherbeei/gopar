@@ -28,9 +28,9 @@ func (v Visitor) Visit(node ast.Node) (w ast.Visitor) {
 	return Visitor{depth: v.depth + 1, n: node}
 }
 
-func showGraph(project *Project) {
+func showGraph(project *Project, pkg string) {
 	//ast.Print(project.fset, project.get("main").file)
-	mainFile := project.get("main").file
+	mainFile := project.get(pkg).file
 	v := Visitor{depth: 0}
 	ast.Walk(v, mainFile)
 

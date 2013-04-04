@@ -103,26 +103,6 @@ func NewAccessPassData() *AccessPassData {
 	}
 }
 
-// Create a resolver for types
-func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
-	globalScope := c.GetPassResult(DefinedTypesPassType, nil).(*DefinedTypesData)
-	return func(ident string) Type {
-		block.Print("Resolving ident", ident)
-		for child := block; child != nil; child = child.parent {
-			defineData := child.Get(AccessPassType).(*AccessPassData)
-			if result, ok := defineData.defines[ident]; ok {
-				return result
-			}
-		}
-		block.Printf("Global scope lookup: %s", ident)
-		if identType, ok := globalScope.defined[ident]; ok {
-			return identType
-		}
-
-		return nil
-	}
-}
-
 type AccessExprFn func(node ast.Node, t AccessType)
 
 func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
@@ -194,7 +174,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		var typ Type
 		switch t := expr.(type) {
 		case ast.Expr:
-			typ = TypeOf(t, Resolver)
+			typ = TypeOfDecl(t, Resolver)
 		case Type:
 			typ = t
 		}
@@ -263,6 +243,10 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				AccessExpr(i, t)
 			}
 		case *ast.FuncDecl:
+			if e.Recv != nil {
+				r := e.Recv.List[0]
+				Define(r.Names[0].Name, r.Type)
+			}
 			AccessExpr(e.Type, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.FuncLit: // we don't support closures, but gather access info
@@ -385,30 +369,30 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			for _, expr := range e.Args {
 				AccessExpr(expr, ReadAccess)
 			}
-			switch f := e.Fun.(type) {
-			case *ast.Ident:
-				// Fill in additional reads/writes once we resolve all functions.
-				// Insert a placeholder access that will be removed later
-				if p.Lookup(f.Name) != nil {
-					placeholder := strconv.FormatInt(rand.Int63(), 10)
-					placeholderIdent := &ast.Ident{Name: placeholder}
-					AccessExpr(placeholderIdent, ReadAccess)
-					pass.SetResult(e, placeholderIdent)
-					b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, f.Name)
-				} else {
-					// we can't see inside the function, assume all of the args are
-					// written to
-					for _, expr := range e.Args {
-						AccessExpr(expr, WriteAccess)
+
+			fnTyp := TypeOf(e.Fun, Resolver).(*FuncType)
+			// Fill in additional reads/writes once we resolve all functions.
+			// Insert a placeholder access that will be removed later
+			if fnTyp != nil && fnTyp.body != nil {
+				placeholder := strconv.FormatInt(rand.Int63(), 10)
+				placeholderIdent := &ast.Ident{Name: placeholder}
+				AccessExpr(placeholderIdent, ReadAccess)
+				pass.SetResult(e, placeholderIdent)
+				b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, fnTyp.String())
+			} else {
+				// we can't see inside the function, assume all of the pointer args are
+				// written to
+				for _, arg := range e.Args {
+					argTyp := TypeOf(arg, Resolver)
+					switch argTyp.(type) {
+					case *IndexedType, *PointerType:
+						AccessExpr(arg, WriteAccess)
+					default:
+						AccessExpr(arg, ReadAccess)
 					}
 				}
-				return
-			case *ast.FuncLit:
-				// gather external accesses, and search inside closure, but don't bother
-				// propogating the aliased arguments
-				AccessExpr(e.Fun, ReadAccess)
 			}
-			b.Printf("\x1b[33mUnsupported CallExpr %T\x1b[0m", e.Fun)
+			return
 		case *ast.BranchStmt:
 			// ignore break/continue/goto/fallthrough
 		case *ast.ExprStmt:
