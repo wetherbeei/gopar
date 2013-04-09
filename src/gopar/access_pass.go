@@ -136,6 +136,9 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 		switch x := t.X.(type) {
 		case *ast.Ident:
 			ident.id = x.Name
+		case *ast.SelectorExpr:
+			ident.id = x.Sel.Name
+			AccessIdentBuild(group, x.X, fn)
 		default:
 			fmt.Printf("Unresolved array expression %T %+v", x, x)
 		}
@@ -277,6 +280,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			}
 			for _, paramGroup := range defines {
 				for _, param := range paramGroup.Names {
+					// check if the last argument is 
 					Define(param.Name, paramGroup.Type)
 				}
 			}
@@ -363,6 +367,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.X, ReadAccess)
 			AccessExpr(e.X, WriteAccess)
 		case *ast.AssignStmt:
+			b.Print("Assigning")
 			// a[idx], x[idx] = b+c+d, idx
 			// writes: a, x reads: idx, b, c, d
 			switch e.Tok {
@@ -372,12 +377,13 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 					if len(e.Rhs) != 1 {
 						b.Printf("ERROR: invalid multi-assign: %d to %d", len(e.Lhs), len(e.Rhs))
 					}
-
 					result := TypeOf(e.Rhs[0], Resolver).(*MultiType).Expand()
+					b.Print(result)
 					for i, lhs := range e.Lhs {
 						Define(lhs.(*ast.Ident).Name, result[i])
 					}
 				} else {
+					b.Print("single assign", e.Lhs)
 					// assign each individually
 					for i, expr := range e.Lhs {
 						if new, ok := expr.(*ast.Ident); ok {
@@ -425,17 +431,10 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 					// written to
 					b.Printf("\x1b[33mOpaque function:\x1b[0m %s", fnTyp.String())
 					classify := func(arg ast.Node, argTyp Type) {
-						switch a := argTyp.(type) {
-						case *IndexedType, *PointerType:
-							AccessExpr(arg, WriteAccess)
-						case *StructType:
-							if a.iface {
-								AccessExpr(arg, WriteAccess)
-							} else {
-								AccessExpr(arg, ReadAccess)
-							}
-						default:
+						if argTyp.PassByValue() {
 							AccessExpr(arg, ReadAccess)
+						} else {
+							AccessExpr(arg, WriteAccess)
 						}
 					}
 
@@ -473,6 +472,10 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.Call, ReadAccess)
 		case *ast.LabeledStmt:
 			AccessExpr(e.Stmt, ReadAccess)
+		case *ast.SliceExpr:
+			AccessExpr(e.Low, ReadAccess)
+			AccessExpr(e.High, ReadAccess)
+			AccessExpr(e.X, t)
 		default:
 			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", e, e)
 		}

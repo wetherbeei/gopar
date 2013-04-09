@@ -24,7 +24,7 @@ func init() {
 	builtin := []string{
 		"uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64",
 		"float32", "float64", "complex64", "complex128", "uint", "int", "uintptr",
-		"rune", "byte", "string", "bool", "error", // aliases
+		"rune", "byte", "bool", "error", "nil",
 	}
 	for _, ident := range builtin {
 		BuiltinTypes[ident] = TypeDecl(&ast.Ident{Name: ident})
@@ -33,6 +33,7 @@ func init() {
 	BuiltinTypes["true"] = BuiltinTypes["bool"]
 	BuiltinTypes["false"] = BuiltinTypes["bool"]
 	BuiltinTypes["iota"] = BuiltinTypes["int"]
+	BuiltinTypes["string"] = newCustomIndexedType(BuiltinTypes["byte"], BuiltinTypes["int"], true)
 
 	// builtin functions
 	BuiltinTypes["len"] = newCustomFuncType(func(args []Type) Type {
@@ -47,11 +48,13 @@ func init() {
 	BuiltinTypes["make"] = newCustomFuncType(func(args []Type) Type {
 		return args[0]
 	})
-	BuiltinTypes["append"] = BuiltinTypes["make"]
+	BuiltinTypes["append"] = newCustomFuncType(func(args []Type) Type {
+		return args[0]
+	}).SetParameterAccess(false)
 
 	BuiltinTypes["close"] = newCustomFuncType(func(args []Type) Type {
 		return nil
-	})
+	}).SetParameterAccess(false)
 	BuiltinTypes["delete"] = BuiltinTypes["close"]
 
 	BuiltinTypes["complex"] = newCustomFuncType(func(args []Type) Type {
@@ -91,6 +94,7 @@ type Type interface {
 	IndexValue() Type            // the return type of an [index] or <-chan operation
 	Call([]Type) Type            // the return types of calling this type
 	Math(Type, token.Token) Type // outcome of any math operation with another type
+	PassByValue() bool           // is this type passed by value or reference?
 	String() string              // a representation of this type
 	CType() string               // type signature (int* for slice)
 	CDecl() string               // type definition (typedef struct {} something)
@@ -173,6 +177,13 @@ func (t *BaseType) CType() string {
 
 func (t *BaseType) Math(other Type, op token.Token) Type {
 	return BinaryOp(t, op, other)
+}
+
+func (t *BaseType) PassByValue() bool {
+	if t.underlying == nil {
+		return true
+	}
+	return t.underlying.PassByValue()
 }
 
 func (typ *BaseType) String() string {
@@ -359,8 +370,9 @@ func (t *StructType) String() string {
 // an array, list, map or chan type
 type IndexedType struct {
 	*BaseType
-	key   Type
-	value Type
+	key     Type
+	value   Type
+	byValue bool // is this type passed by value (array) or reference (map, slice)
 }
 
 func newIndexedType(node ast.Node) *IndexedType {
@@ -369,16 +381,31 @@ func newIndexedType(node ast.Node) *IndexedType {
 	}
 }
 
+func newCustomIndexedType(value Type, key Type, byValue bool) *IndexedType {
+	t := newIndexedType(nil)
+	t.key = key
+	t.value = value
+	t.byValue = byValue
+	return t
+}
+
 // fill in key and value sections
 func (typ *IndexedType) Complete(resolver Resolver) {
 	switch t := typ.Node.(type) {
 	case *ast.ArrayType:
-		typ.key = TypeOfDecl(&ast.Ident{Name: "int"}, resolver)
+		if t.Len != nil {
+			typ.byValue = true // array
+		} else {
+			typ.byValue = false // slice
+		}
+		typ.key = BuiltinTypes["int"]
 		typ.value = TypeOfDecl(t.Elt, resolver)
 	case *ast.MapType:
+		typ.byValue = false
 		typ.key = TypeOfDecl(t.Key, resolver)
 		typ.value = TypeOfDecl(t.Value, resolver)
 	case *ast.ChanType:
+		typ.byValue = false
 		typ.value = TypeOfDecl(t.Value, resolver)
 	}
 	return
@@ -390,6 +417,10 @@ func (t *IndexedType) IndexKey() Type {
 
 func (t *IndexedType) IndexValue() Type {
 	return t.value
+}
+
+func (t *IndexedType) PassByValue() bool {
+	return t.byValue
 }
 
 func (typ *IndexedType) String() string {
@@ -436,6 +467,10 @@ func newPointerTypeFromT(typ Type) *PointerType {
 		BaseType: newBaseType(nil),
 		inner:    typ,
 	}
+}
+
+func (t *PointerType) PassByValue() bool {
+	return false
 }
 
 // Resolve the inner type
@@ -782,6 +817,7 @@ func TypeOfDecl(expr ast.Node, resolver Resolver) Type {
 }
 
 func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
+	fmt.Printf("TypeOf %T %+v\n", expr, expr)
 	switch t := expr.(type) {
 	case *ast.CallExpr:
 		callType := TypeOf(t.Fun, resolver)
@@ -861,7 +897,9 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 			return fieldTyp
 		}
 		// enforce *T vs T method sets here
+
 		methodTyp := innerTyp.Method(t.Sel.Name)
+		fmt.Println(innerTyp.String(), methodTyp)
 		switch innerTyp.(type) {
 		case *PointerType:
 			// both *T and T methods allowed
@@ -882,6 +920,9 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		return TypeOf(t.X, resolver)
 	case *ast.Ellipsis:
 		return TypeOf(t.Elt, resolver)
+	case *ast.SliceExpr:
+		sliceTyp := TypeOf(t.X, resolver)
+		return newCustomIndexedType(sliceTyp.IndexValue(), sliceTyp.IndexKey(), false)
 	default:
 		fmt.Printf("Unhandled TypeOf(%T %+v)\n", expr, expr)
 	}

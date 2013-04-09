@@ -137,57 +137,67 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 		}
 	}
 
+	// copy matching accesses from arg/argName to callArg
+	// func foo(arg) {}
+	// foo(callArg) -> translate accesses inside foo to "arg" to "callArg"s
+	// CallExpr site
+	propogateFn := func(callArg ast.Expr, arg *ast.Field, argName *ast.Ident) {
+		callIdent := &IdentifierGroup{}
+		AccessIdentBuild(callIdent, callArg, nil)
+
+		// Find all accesses to these variables
+		for _, access := range funcDataBlock.accesses {
+			// Replace the function arg name with the callIdent prefix
+			if access.group[0].id == argName.Name {
+				// check if an index variable is also a function argument and
+				// remove it
+				ig := StripDefinedIndex(access, funcDataBlock)
+
+				newAccess := ig.group
+				// if the callsite is &a and the access is *a, make the access
+				// a for this function
+				var callIdentCopy []Identifier
+				if callIdent.group[len(callIdent.group)-1].refType == AddressOf && newAccess[len(newAccess)-1].refType == Dereference {
+					b.Print("Removing pointer alias & -> *")
+					newAccess[len(newAccess)-1].refType = NoReference
+					callIdentCopy = make([]Identifier, len(callIdent.group))
+					copy(callIdentCopy, callIdent.group)
+					callIdentCopy[len(callIdentCopy)-1].refType = NoReference
+				} else {
+					callIdentCopy = callIdent.group
+				}
+				// replace access[0] with callIdent
+				ig.group = append(ig.group, callIdentCopy...)
+				ig.group = append(ig.group, newAccess[1:]...)
+				b.Printf("%s -> %s", access.String(), ig.String())
+				funcAccesses = append(funcAccesses, ig)
+			}
+		}
+	}
+
 	// Fill in aliased arguments
 	pos := 0 // argument position
 	for _, arg := range funcType.Params.List {
-		writeThrough := false
+		writeThrough := !TypeOfDecl(arg.Type, resolver).PassByValue()
 		// is the argument able to be modified?
 		// builtin types (slice, map, chan), pointers
-		switch arg.Type.(type) {
-		case *ast.ArrayType, *ast.MapType, *ast.ChanType:
-			b.Printf("Pass-by-reference %v %T", arg.Names, arg.Type)
-			writeThrough = true
-		case *ast.StarExpr:
-			b.Printf("Pass-by-pointer %v %T", arg.Names, arg.Type)
-			writeThrough = true
-		}
 
 		for _, argName := range arg.Names {
+			callArg := call.Args[pos]
 			if writeThrough {
-				callArg := call.Args[pos]
-				callIdent := &IdentifierGroup{}
-				AccessIdentBuild(callIdent, callArg, nil)
-
-				// Find all accesses to these variables
-				for _, access := range funcDataBlock.accesses {
-					// Replace the function arg name with the callIdent prefix
-					if access.group[0].id == argName.Name {
-						// check if an index variable is also a function argument and
-						// remove it
-						ig := StripDefinedIndex(access, funcDataBlock)
-
-						newAccess := ig.group
-						// if the callsite is &a and the access is *a, make the access
-						// a for this function
-						var callIdentCopy []Identifier
-						if callIdent.group[len(callIdent.group)-1].refType == AddressOf && newAccess[len(newAccess)-1].refType == Dereference {
-							b.Print("Removing pointer alias & -> *")
-							newAccess[len(newAccess)-1].refType = NoReference
-							callIdentCopy = make([]Identifier, len(callIdent.group))
-							copy(callIdentCopy, callIdent.group)
-							callIdentCopy[len(callIdentCopy)-1].refType = NoReference
-						} else {
-							callIdentCopy = callIdent.group
-						}
-						// replace access[0] with callIdent
-						ig.group = append(ig.group, callIdentCopy...)
-						ig.group = append(ig.group, newAccess[1:]...)
-						b.Printf("%s -> %s", access.String(), ig.String())
-						funcAccesses = append(funcAccesses, ig)
-					}
-				}
+				propogateFn(callArg, arg, argName)
 			}
 			pos++
+		}
+	}
+
+	// also propogate accesses to the receiver
+	if fun.receiver != nil {
+		if !fun.receiver.PassByValue() {
+			recv := fun.Node.(*ast.FuncDecl).Recv.List[0]
+			// callArg is the struct we're calling this method on
+			callArg := call.Fun.(*ast.SelectorExpr).X
+			propogateFn(callArg, recv, recv.Names[0])
 		}
 	}
 
