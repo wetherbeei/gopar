@@ -18,10 +18,6 @@ func NewDefinedTypesData() *DefinedTypesData {
 	d := &DefinedTypesData{
 		defined: make(map[string]Type),
 	}
-
-	for k, v := range BuiltinTypes {
-		d.defined[k] = v
-	}
 	return d
 }
 
@@ -51,20 +47,37 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 	data := NewDefinedTypesData()
 	var methods []*ast.FuncDecl
 	var defined map[string]Type = make(map[string]Type)
+	Define := func(name string, t Type) {
+		defined[name] = t // TODO: write directly to data.defined?
+	}
+	// This can get messy; top-level definitions don't have to be done in any
+	// order
 	for _, decl := range file.Decls {
 		switch t := decl.(type) {
 		case *ast.FuncDecl:
 			if t.Recv != nil {
 				methods = append(methods, t)
 			} else {
-				defined[t.Name.Name] = TypeDecl(t)
+				Define(t.Name.Name, TypeDecl(t))
 			}
 		case *ast.GenDecl:
 			for _, spec := range t.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
 					var name = s.Name.Name
-					defined[name] = TypeDecl(s.Type)
+					Define(name, TypeDecl(s.Type))
+				case *ast.ValueSpec:
+
+					if s.Type != nil {
+						for _, name := range s.Names {
+							Define(name.Name, newFutureType(s.Type))
+						}
+					} else {
+						// all constants
+						for i, name := range s.Names {
+							Define(name.Name, newFutureType(s.Values[i]))
+						}
+					}
 				case *ast.ImportSpec:
 					var name string
 					var path string
@@ -82,6 +95,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 						}
 					}
 					name = name[1 : len(name)-1] // strip off ["] in the back and [/"] in front
+					path = path[1 : len(path)-1]
 					if name != "_" {
 						// attach the types found in the other package here
 						otherPackage := pass.compiler.project.get(path)
@@ -90,17 +104,22 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 						var packageResolver Resolver
 						if ok {
 							packageResolver = func(name string) Type {
-								return otherPackageTypes.defined[name]
+								pkgTyp := otherPackageTypes.defined[name]
+								fmt.Printf("Cross-package lookup: %s.%s = %s\n", path, name, pkgTyp)
+								return pkgTyp
 							}
 						} else {
 							// package not found
+							// TODO: make this an error?
 							fmt.Println("Package not found:", path)
 							packageResolver = func(name string) Type {
+								fmt.Println("Empty package resolver", name)
 								return nil
 							}
 						}
-						defined[name] = TypeDecl(s)
-						defined[name].Complete(packageResolver)
+						pkgType := TypeDecl(s)
+						pkgType.Complete(packageResolver)
+						Define(name, pkgType)
 					}
 				}
 			}
@@ -110,13 +129,17 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 	}
 
 	pass.SetResult(p, data)
-	fmt.Println(data.defined)
 
 	resolver := MakeResolver(nil, p, pass.compiler)
-	// fill in embedded fields
+	// add all of the defines to the package scope so they can be found from
+	// .Complete()
 	for name, typ := range defined {
-		typ.Complete(resolver)
 		data.defined[name] = typ
+	}
+
+	// fill in embedded fields
+	for _, typ := range defined {
+		typ.Complete(resolver)
 	}
 
 	// fill in methods

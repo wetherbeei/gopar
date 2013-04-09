@@ -28,7 +28,6 @@ func init() {
 	}
 	for _, ident := range builtin {
 		BuiltinTypes[ident] = TypeDecl(&ast.Ident{Name: ident})
-		BuiltinTypes[ident].Complete(nil)
 	}
 
 	BuiltinTypes["true"] = BuiltinTypes["bool"]
@@ -36,8 +35,48 @@ func init() {
 	BuiltinTypes["iota"] = BuiltinTypes["int"]
 
 	// builtin functions
-	BuiltinTypes["len"] = TypeDecl(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: &ast.Ident{Name: "int"}}}}})
-	// make is handled dynamically in types.go:TypeOf
+	BuiltinTypes["len"] = newCustomFuncType(func(args []Type) Type {
+		return BuiltinTypes["int"]
+	}).SetParameterAccess(true)
+
+	BuiltinTypes["cap"] = BuiltinTypes["len"]
+
+	BuiltinTypes["new"] = newCustomFuncType(func(args []Type) Type {
+		return newPointerTypeFromT(args[0])
+	})
+	BuiltinTypes["make"] = newCustomFuncType(func(args []Type) Type {
+		return args[0]
+	})
+	BuiltinTypes["append"] = BuiltinTypes["make"]
+
+	BuiltinTypes["close"] = newCustomFuncType(func(args []Type) Type {
+		return nil
+	})
+	BuiltinTypes["delete"] = BuiltinTypes["close"]
+
+	BuiltinTypes["complex"] = newCustomFuncType(func(args []Type) Type {
+		width := args[0].Definition().(*ast.Ident).Name[len("float"):]
+		return BuiltinTypes["complex"+width]
+	})
+	BuiltinTypes["real"] = newCustomFuncType(func(args []Type) Type {
+		width := args[0].Definition().(*ast.Ident).Name[len("complex"):]
+		return BuiltinTypes["float"+width]
+	})
+	BuiltinTypes["imag"] = BuiltinTypes["real"]
+
+	BuiltinTypes["panic"] = newCustomFuncType(func(args []Type) Type {
+		return nil
+	})
+	BuiltinTypes["recover"] = newCustomFuncType(func(args []Type) Type {
+		return nil // TODO: this should return interface{}
+	})
+	// builtin packages
+
+	// unsafe
+	//BuiltinTypes["unsafe"] =
+
+	// reflect
+	//BuiltinTypes["reflect"] = 
 }
 
 type Type interface {
@@ -50,7 +89,7 @@ type Type interface {
 	Dereference() Type           // the return type of a *dereference operation
 	IndexKey() Type              // type for [key]
 	IndexValue() Type            // the return type of an [index] or <-chan operation
-	Call() []Type                // the return types of calling this type
+	Call([]Type) Type            // the return types of calling this type
 	Math(Type, token.Token) Type // outcome of any math operation with another type
 	String() string              // a representation of this type
 	CType() string               // type signature (int* for slice)
@@ -58,8 +97,9 @@ type Type interface {
 }
 
 type BaseType struct {
-	ast.Node                      // definition node
-	methods  map[string]*FuncType // every type can have a method set
+	ast.Node                        // definition node
+	methods    map[string]*FuncType // every type can have a method set
+	underlying Type                 // if this type is a direct shadow of an existing type
 }
 
 func newBaseType(node ast.Node) *BaseType {
@@ -67,43 +107,58 @@ func newBaseType(node ast.Node) *BaseType {
 }
 
 func (t *BaseType) Complete(resolver Resolver) {
+	t.underlying = TypeOfDecl(t.Node, resolver)
 	return
 }
 
+// All methods to go to the underlying type
 func (t *BaseType) Definition() ast.Node {
-	return t.Node
+	if t.underlying == nil {
+		return t.Node
+	}
+	return t.underlying.Definition()
 }
 
 func (t *BaseType) Fields() []string {
-	return nil
+	return t.underlying.Fields()
 }
 
 func (t *BaseType) Field(name string) Type {
-	return nil
+	return t.underlying.Field(name)
 }
 
+// Methods get added to the current type
 func (t *BaseType) AddMethod(name string, f *FuncType) {
 	t.methods[name] = f
 }
 
 func (t *BaseType) Method(name string) *FuncType {
-	return t.methods[name]
+	if method, ok := t.methods[name]; ok {
+		return method
+	}
+	if t.underlying != nil {
+		return t.underlying.Method(name)
+	}
+	return nil
 }
 
 func (t *BaseType) Dereference() Type {
-	return nil
+	if t.underlying == nil {
+		return nil
+	}
+	return t.underlying.Dereference()
 }
 
 func (t *BaseType) IndexKey() Type {
-	return nil
+	return t.underlying.IndexKey()
 }
 
 func (t *BaseType) IndexValue() Type {
-	return nil
+	return t.underlying.IndexValue()
 }
 
-func (t *BaseType) Call() []Type {
-	return nil
+func (t *BaseType) Call(args []Type) Type {
+	return t.underlying.Call(args)
 }
 
 // The declaration of the type, such as "typedef Pixel struct {}"
@@ -122,13 +177,14 @@ func (t *BaseType) Math(other Type, op token.Token) Type {
 
 func (typ *BaseType) String() string {
 	var buffer bytes.Buffer
-	switch t := typ.Node.(type) {
-	case *ast.Ident:
-		buffer.WriteString(t.Name)
-	case *ast.BasicLit:
-		buffer.WriteString(t.Value)
-	default:
-		buffer.WriteString(fmt.Sprintf("Type<%T %+v>", t, t))
+	if typ.underlying != nil {
+		buffer.WriteString("Shadow{")
+		buffer.WriteString(typ.underlying.String())
+		buffer.WriteString("}")
+	} else {
+		buffer.WriteString("BaseType{")
+		buffer.WriteString(typ.Node.(*ast.Ident).Name)
+		buffer.WriteString("} ")
 	}
 	buffer.WriteString(typ.MethodSet())
 	return buffer.String()
@@ -136,11 +192,13 @@ func (typ *BaseType) String() string {
 
 func (t *BaseType) MethodSet() string {
 	var buffer bytes.Buffer
-	buffer.WriteString(" methods{")
-	for k := range t.methods {
-		buffer.WriteString(k + ",")
+	if len(t.methods) > 0 {
+		buffer.WriteString(" methods{")
+		for k := range t.methods {
+			buffer.WriteString(k + ",")
+		}
+		buffer.WriteString("}")
 	}
-	buffer.WriteString("}")
 	return buffer.String()
 }
 
@@ -181,6 +239,7 @@ type StructType struct {
 	fieldOrder []string
 	fields     map[string]Type
 	embedded   []*StructType
+	iface      bool
 }
 
 func newStructType(node ast.Node) *StructType {
@@ -214,12 +273,20 @@ func (t *StructType) Complete(resolver Resolver) {
 			}
 		}
 	case *ast.InterfaceType:
+		t.iface = true
 		for _, method := range e.Methods.List {
-			methodTyp := TypeOfDecl(method.Type, resolver)
-			for _, name := range method.Names {
-				t.AddMethod(name.Name, methodTyp.(*FuncType))
+			fmt.Printf("Interface method: %+v\n", method)
+			switch m := method.Type.(type) {
+			case *ast.FuncType:
+				methodTyp := newMethodType(m, nil, t)
+				methodTyp.Complete(resolver)
+				for _, name := range method.Names {
+					t.AddMethod(name.Name, methodTyp)
+				}
+			case *ast.Ident:
+				// embedded
+				t.embedded = append(t.embedded, resolver(m.Name).(*StructType))
 			}
-			// TODO: how are embedded interfaces handled?
 		}
 	}
 }
@@ -262,7 +329,11 @@ func (t *StructType) Method(name string) *FuncType {
 
 func (t *StructType) String() string {
 	var buffer bytes.Buffer
-	buffer.WriteString("struct {")
+	if !t.iface {
+		buffer.WriteString("struct {")
+	} else {
+		buffer.WriteString("interface {")
+	}
 	for i, field := range t.Fields() {
 		buffer.WriteString(fmt.Sprintf("%s=%s", field, t.Field(field).String()))
 		if i != len(t.Fields())-1 {
@@ -270,6 +341,16 @@ func (t *StructType) String() string {
 		}
 	}
 	buffer.WriteString("}")
+	if len(t.embedded) > 0 {
+		buffer.WriteString("embedded {")
+		for i, e := range t.embedded {
+			buffer.WriteString(e.String())
+			if i != len(t.embedded)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("}")
+	}
 	buffer.WriteString(t.MethodSet())
 
 	return buffer.String()
@@ -292,13 +373,13 @@ func newIndexedType(node ast.Node) *IndexedType {
 func (typ *IndexedType) Complete(resolver Resolver) {
 	switch t := typ.Node.(type) {
 	case *ast.ArrayType:
-		typ.key = TypeOf(&ast.Ident{Name: "int"}, resolver)
-		typ.value = TypeOf(t.Elt, resolver)
+		typ.key = TypeOfDecl(&ast.Ident{Name: "int"}, resolver)
+		typ.value = TypeOfDecl(t.Elt, resolver)
 	case *ast.MapType:
-		typ.key = TypeOf(t.Key, resolver)
-		typ.value = TypeOf(t.Value, resolver)
+		typ.key = TypeOfDecl(t.Key, resolver)
+		typ.value = TypeOfDecl(t.Value, resolver)
 	case *ast.ChanType:
-		typ.value = TypeOf(t.Value, resolver)
+		typ.value = TypeOfDecl(t.Value, resolver)
 	}
 	return
 }
@@ -350,10 +431,17 @@ func newPointerType(node ast.Node) *PointerType {
 	}
 }
 
+func newPointerTypeFromT(typ Type) *PointerType {
+	return &PointerType{
+		BaseType: newBaseType(nil),
+		inner:    typ,
+	}
+}
+
 // Resolve the inner type
 func (t *PointerType) Complete(resolver Resolver) {
 	expr := t.Node.(*ast.StarExpr).X
-	t.inner = TypeOf(expr, resolver)
+	t.inner = TypeOfDecl(expr, resolver)
 	return
 }
 
@@ -383,7 +471,6 @@ func (t *PointerType) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString("*")
 	buffer.WriteString(t.inner.String())
-	buffer.WriteString(t.MethodSet())
 	return buffer.String()
 }
 
@@ -392,17 +479,21 @@ type FuncType struct {
 	*BaseType
 	params                []Type
 	results               []Type
+	ellipsis              bool // is the last argument in this function an ellipsis?
 	method, pointerMethod bool
 	receiver              Type           // if method == true
 	name                  string         // if we know the name of this function
 	body                  *ast.BlockStmt // the actual declaration, if possible; not there for builtin/C functions
 	typ                   *ast.FuncType
+	customCall            func([]Type) Type // a custom function for builtin magic (make, new, unsafe.*, etc)
+	noWriteMask           []bool            // an optional mask for functions without bodies, true means the arg wasn't written to
 }
 
-// decl [optional]
+// decl [optional], but used as the defining node in a BasicBlock, so it must
+// be returned from BaseType.Definition()
 func newFuncType(typ *ast.FuncType, decl *ast.FuncDecl) *FuncType {
 	t := &FuncType{
-		BaseType: newBaseType(typ),
+		BaseType: newBaseType(decl),
 		typ:      typ,
 	}
 	if decl != nil {
@@ -426,6 +517,12 @@ func newMethodType(typ *ast.FuncType, decl *ast.FuncDecl, recv Type) *FuncType {
 	return funcTyp
 }
 
+func newCustomFuncType(f func([]Type) Type) *FuncType {
+	t := newFuncType(nil, nil)
+	t.customCall = f
+	return t
+}
+
 // fill in params and results
 func (t *FuncType) Complete(resolver Resolver) {
 	expr := t.typ
@@ -434,9 +531,12 @@ func (t *FuncType) Complete(resolver Resolver) {
 			panic("Already Completed")
 		}
 		for _, arg := range expr.Params.List {
-			argType := TypeOf(arg.Type, resolver)
+			argType := TypeOfDecl(arg.Type, resolver)
 			for _ = range arg.Names {
 				t.params = append(t.params, argType)
+			}
+			if _, ellipsis := arg.Type.(*ast.Ellipsis); ellipsis {
+				t.ellipsis = true
 			}
 		}
 	}
@@ -445,7 +545,7 @@ func (t *FuncType) Complete(resolver Resolver) {
 			panic("Already Completed")
 		}
 		for _, result := range expr.Results.List {
-			resultType := TypeOf(result.Type, resolver)
+			resultType := TypeOfDecl(result.Type, resolver)
 			i := len(result.Names)
 			if i == 0 {
 				i = 1
@@ -458,17 +558,47 @@ func (t *FuncType) Complete(resolver Resolver) {
 	return
 }
 
-func (t *FuncType) Call() []Type {
-	return t.results
+func (t *FuncType) Call(args []Type) Type {
+	if t.customCall != nil {
+		return t.customCall(args)
+	} else {
+		if len(t.results) > 1 {
+			return newMultiType(t.results)
+		} else {
+			return t.results[0]
+		}
+	}
+	return nil
+}
+
+func (t *FuncType) SetParameterAccess(mask ...bool) *FuncType {
+	t.noWriteMask = mask
+	return t // allow method chaining
+}
+
+func (t *FuncType) GetParameterAccess(index int) bool {
+	if t.noWriteMask == nil {
+		return false
+	}
+	if len(t.noWriteMask) <= index {
+		// return the value of the last argument for "..."" functions
+		return t.noWriteMask[len(t.noWriteMask)-1]
+	}
+	return t.noWriteMask[index]
 }
 
 func (t *FuncType) String() string {
 	var buffer bytes.Buffer
-	buffer.WriteString("func (")
+	buffer.WriteString("func ")
 	if t.method {
+		buffer.WriteString("(")
 		buffer.WriteString(t.receiver.String())
-		buffer.WriteString(") (")
+		buffer.WriteString(") ")
 	}
+	if len(t.name) > 0 {
+		buffer.WriteString(t.name)
+	}
+	buffer.WriteString("(")
 	for i, param := range t.params {
 		buffer.WriteString(param.String())
 		if i < len(t.params)-1 {
@@ -483,10 +613,50 @@ func (t *FuncType) String() string {
 			if i < len(t.results)-1 {
 				buffer.WriteString(", ")
 			}
+			if t.ellipsis && i == len(t.results)-1 {
+				buffer.WriteString("...")
+			}
 		}
 		buffer.WriteString(")")
 	}
+	if t.body == nil {
+		buffer.WriteString(" <builtin>")
+	}
 	return buffer.String()
+}
+
+// Represent multiple return values in a single Type
+type MultiType struct {
+	*BaseType
+	values []Type
+}
+
+func newMultiType(values []Type) *MultiType {
+	t := &MultiType{
+		BaseType: newBaseType(values[0].Definition()),
+		values:   values,
+	}
+	t.BaseType.underlying = values[0]
+	return t
+}
+
+func (t *MultiType) Expand() []Type {
+	return t.values
+}
+
+// A type that will be resolved in the future through .Complete()
+type FutureType struct {
+	*BaseType
+}
+
+func newFutureType(node ast.Node) *FutureType {
+	return &FutureType{
+		BaseType: newBaseType(node),
+	}
+}
+
+func (t *FutureType) Complete(resolver Resolver) {
+	t.BaseType.underlying = TypeOfDecl(t.Node, resolver)
 }
 
 type PackageType struct {
@@ -501,13 +671,22 @@ func newPackageType(node ast.Node) Type {
 }
 
 func (t *PackageType) Complete(resolver Resolver) {
-	t.resolver = resolver
+	// TODO: fix the double-complete in defined types pass
+	if t.resolver == nil {
+		t.resolver = resolver
+	}
 }
 
-// Field function takes care of returning everything defined in this package
 func (t *PackageType) Field(name string) Type {
 	// TODO: enforce exported fields only?
 	return t.resolver(name)
+}
+
+func (t *PackageType) Method(name string) *FuncType {
+	if funcTyp, ok := t.resolver(name).(*FuncType); ok {
+		return funcTyp
+	}
+	return nil
 }
 
 func (t *PackageType) String() string {
@@ -581,8 +760,11 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 				return result
 			}
 		}
-		globalScope := c.GetPassResult(DefinedTypesPassType, p).(*DefinedTypesData)
-		if identType, ok := globalScope.defined[ident]; ok {
+		packageScope := c.GetPassResult(DefinedTypesPassType, p).(*DefinedTypesData)
+		if identType, ok := packageScope.defined[ident]; ok {
+			return identType
+		}
+		if identType, ok := BuiltinTypes[ident]; ok {
 			return identType
 		}
 		return nil
@@ -594,7 +776,7 @@ func TypeOf(expr ast.Node, resolver Resolver) Type {
 }
 
 // Used to find the types of arguments or definitions, they vary by how they
-// handler *pointers
+// handle *pointers
 func TypeOfDecl(expr ast.Node, resolver Resolver) Type {
 	return typeOf(expr, resolver, true)
 }
@@ -602,28 +784,28 @@ func TypeOfDecl(expr ast.Node, resolver Resolver) Type {
 func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 	switch t := expr.(type) {
 	case *ast.CallExpr:
-		var fnType Type
-		switch f := t.Fun.(type) {
-		case *ast.Ident:
-			// hook special functions
-			if f.Name == "make" {
-				fnType = newFuncType(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: t.Args[0]}}}}, nil)
-				fnType.Complete(resolver)
-			} else if f.Name == "new" {
-				fnType = newFuncType(&ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{&ast.Field{Type: &ast.StarExpr{X: t.Args[0]}}}}}, nil)
-				fnType.Complete(resolver)
-			} else if builtin, ok := BuiltinTypes[f.Name]; ok {
-				// type conversion
-				// int32(x)
-				return builtin
-			} else {
-				fnType = resolver(f.Name)
+		callType := TypeOf(t.Fun, resolver)
+		// is this a type conversion or a function call?
+		switch callType.(type) {
+		case *FuncType:
+			// gather arguments to pass to Call()
+			var args []Type
+			for _, argExpr := range t.Args {
+				args = append(args, TypeOf(argExpr, resolver))
 			}
-		case *ast.FuncLit:
-			fnType = newFuncType(f.Type, nil)
-			fnType.Complete(resolver)
+			return callType.Call(args)
+		default:
+			// int32(X)
+			// deal with (*int32) parentheses manually
+			var retTyp Type
+			switch inner := t.Fun.(type) {
+			case *ast.ParenExpr:
+				retTyp = TypeOfDecl(inner.X, resolver)
+			default:
+				retTyp = TypeOfDecl(t.Fun, resolver)
+			}
+			return retTyp
 		}
-		return fnType // TODO/BUG: should this return fnType.Call() instead? Make a new MultiType?
 	case *ast.Ident:
 		return resolver(t.Name)
 	case *ast.BasicLit:
@@ -648,7 +830,8 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		case token.NOT:
 			return BuiltinTypes["bool"]
 		}
-		return TypeOf(t, resolver)
+		// token = -,+
+		return TypeOf(t.X, resolver)
 	case *ast.StarExpr:
 		if definition {
 			ptrTyp := TypeDecl(t)
@@ -656,6 +839,7 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 			return ptrTyp
 		}
 		ptrType := TypeOf(t.X, resolver)
+		fmt.Println("Dereferencing", ptrType.String())
 		return ptrType.Dereference()
 	case *ast.CompositeLit:
 		// Something{}
@@ -663,8 +847,9 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 	case *ast.BinaryExpr:
 		xTyp := TypeOf(t.X, resolver)
 		yTyp := TypeOf(t.Y, resolver)
+		fmt.Println(xTyp, t.X, t.Op, yTyp, t.Y)
 		result := xTyp.Math(yTyp, t.Op)
-		fmt.Println(result, "=", xTyp.String(), t.Op, yTyp.String())
+		fmt.Println("=>", result)
 		return result
 	case *ast.ArrayType, *ast.ChanType, *ast.MapType:
 		indexTyp := newIndexedType(t)
@@ -688,6 +873,15 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 			}
 		}
 		return nil
+	case *ast.TypeAssertExpr:
+		assertedTyp := TypeOfDecl(t.Type, resolver)
+		// possibly 2 return values, but by default MultiType will act like the
+		// first type
+		return newMultiType([]Type{assertedTyp, BuiltinTypes["bool"]})
+	case *ast.ParenExpr:
+		return TypeOf(t.X, resolver)
+	case *ast.Ellipsis:
+		return TypeOf(t.Elt, resolver)
 	default:
 		fmt.Printf("Unhandled TypeOf(%T %+v)\n", expr, expr)
 	}

@@ -152,6 +152,10 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 		}
 	case *ast.CompositeLit:
 		// ignore, we're building a type expression, no accesses here
+	case *ast.CallExpr:
+		if fn != nil {
+			fn(t, ReadAccess)
+		}
 	default:
 		fmt.Printf("Unknown expression %T %+v\n", t, t)
 	}
@@ -163,7 +167,8 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	b := pass.GetCompiler().GetPassResult(BasicBlockPassType, blockNode).(*BasicBlock)
 	dataBlock := NewAccessPassData()
 	b.Set(AccessPassType, dataBlock)
-	b.Printf("\x1b[32;1mBasicBlock\x1b[0m %T %+v", blockNode, blockNode)
+	pos := p.Location(blockNode.Pos())
+	b.Printf("\x1b[32;1mBasicBlock %s:%d\x1b[0m %T %+v", pos.Filename, pos.Line, blockNode, blockNode)
 	// Helper functions.
 	Resolver := MakeResolver(b, p, pass.compiler)
 	// Define adds the identifier as being defined in this block
@@ -224,9 +229,15 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		// recursively fill in accesses for an expression
 		switch e := node.(type) {
 		// These three expression types form the basis of a memory access.
-		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident, *ast.UnaryExpr, *ast.StarExpr:
+		case *ast.SelectorExpr, *ast.IndexExpr, *ast.Ident, *ast.StarExpr:
 			AccessIdent(e, t)
-
+		case *ast.UnaryExpr:
+			// only decend down a unary if it's for a memory ref &
+			if e.Op == token.AND {
+				AccessIdent(e, t)
+			} else {
+				AccessExpr(e.X, t)
+			}
 		// Statement/expression blocks
 		case *ast.ParenExpr:
 			AccessExpr(e.X, ReadAccess)
@@ -248,7 +259,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				Define(r.Names[0].Name, r.Type)
 			}
 			AccessExpr(e.Type, ReadAccess)
-			AccessExpr(e.Body, ReadAccess)
+			if e.Body != nil {
+				AccessExpr(e.Body, ReadAccess)
+			}
 		case *ast.FuncLit: // we don't support closures, but gather access info
 			AccessExpr(e.Type, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
@@ -302,6 +315,27 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.Body, ReadAccess)
 
 			AccessExpr(e.Else, ReadAccess)
+		case *ast.SelectStmt:
+			AccessExpr(e.Body, ReadAccess)
+		case *ast.SwitchStmt:
+			AccessExpr(e.Init, ReadAccess)
+			AccessExpr(e.Body, ReadAccess)
+		case *ast.TypeSwitchStmt:
+			AccessExpr(e.Init, ReadAccess)
+			AccessExpr(e.Assign, ReadAccess)
+			AccessExpr(e.Body, ReadAccess)
+		case *ast.CommClause:
+			AccessExpr(e.Comm, ReadAccess)
+			for _, b := range e.Body {
+				AccessExpr(b, ReadAccess)
+			}
+		case *ast.CaseClause:
+			for _, c := range e.List {
+				AccessExpr(c, ReadAccess)
+			}
+			for _, b := range e.Body {
+				AccessExpr(b, ReadAccess)
+			}
 		case *ast.DeclStmt:
 			AccessExpr(e.Decl, ReadAccess)
 		case *ast.GenDecl:
@@ -309,10 +343,18 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				AccessExpr(s, ReadAccess)
 			}
 		case *ast.ValueSpec:
-			// defines
-			for _, name := range e.Names {
-				Define(name.Name, e.Type)
+			// defines - these are either typed or constant
+			if e.Type != nil {
+				for _, name := range e.Names {
+					Define(name.Name, e.Type)
+				}
+			} else {
+				// all constants
+				for i, name := range e.Names {
+					Define(name.Name, e.Values[i])
+				}
 			}
+
 			// reads
 			for _, expr := range e.Values {
 				AccessExpr(expr, ReadAccess)
@@ -325,28 +367,26 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			// writes: a, x reads: idx, b, c, d
 			switch e.Tok {
 			case token.DEFINE:
-				// multi-assign functions
+				// multi-assign functions or type conversions
 				if len(e.Lhs) != len(e.Rhs) {
-					fnType := TypeOf(e.Rhs[0], Resolver)
-					b.Print("Multi-assign", fnType.Call())
-					for pos, result := range fnType.Call() {
-						Define(e.Lhs[pos].(*ast.Ident).Name, result)
+					if len(e.Rhs) != 1 {
+						b.Printf("ERROR: invalid multi-assign: %d to %d", len(e.Lhs), len(e.Rhs))
+					}
+
+					result := TypeOf(e.Rhs[0], Resolver).(*MultiType).Expand()
+					for i, lhs := range e.Lhs {
+						Define(lhs.(*ast.Ident).Name, result[i])
 					}
 				} else {
 					// assign each individually
 					for i, expr := range e.Lhs {
 						if new, ok := expr.(*ast.Ident); ok {
-							// if RHS[i] is a function, it MUST have one return slot
-							if fnType := TypeOf(e.Rhs[i], Resolver); fnType != nil && len(fnType.Call()) == 1 {
-								Define(new.Name, fnType.Call()[0])
-							} else {
-								Define(new.Name, e.Rhs[i])
-							}
+							Define(new.Name, TypeOf(e.Rhs[i], Resolver))
 						}
 					}
 				}
 			case token.ASSIGN:
-				// nothing
+				// no defines here, assigns are done below
 			default:
 				// x += 1, etc
 				for _, expr := range e.Lhs {
@@ -369,27 +409,51 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			for _, expr := range e.Args {
 				AccessExpr(expr, ReadAccess)
 			}
-
-			fnTyp := TypeOf(e.Fun, Resolver).(*FuncType)
+			fmt.Printf("%T %+v\n", e.Fun, e.Fun)
+			fnTyp, ok := TypeOf(e.Fun, Resolver).(*FuncType)
 			// Fill in additional reads/writes once we resolve all functions.
 			// Insert a placeholder access that will be removed later
-			if fnTyp != nil && fnTyp.body != nil {
-				placeholder := strconv.FormatInt(rand.Int63(), 10)
-				placeholderIdent := &ast.Ident{Name: placeholder}
-				AccessExpr(placeholderIdent, ReadAccess)
-				pass.SetResult(e, placeholderIdent)
-				b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, fnTyp.String())
-			} else {
-				// we can't see inside the function, assume all of the pointer args are
-				// written to
-				for _, arg := range e.Args {
-					argTyp := TypeOf(arg, Resolver)
-					switch argTyp.(type) {
-					case *IndexedType, *PointerType:
-						AccessExpr(arg, WriteAccess)
-					default:
-						AccessExpr(arg, ReadAccess)
+			if ok && fnTyp != nil {
+				if fnTyp.body != nil {
+					placeholder := strconv.FormatInt(rand.Int63(), 10)
+					placeholderIdent := &ast.Ident{Name: placeholder}
+					AccessExpr(placeholderIdent, ReadAccess)
+					pass.SetResult(e, placeholderIdent)
+					b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, fnTyp.String())
+				} else {
+					// we can't see inside the function, assume all of the pointer args are
+					// written to
+					b.Printf("\x1b[33mOpaque function:\x1b[0m %s", fnTyp.String())
+					classify := func(arg ast.Node, argTyp Type) {
+						switch a := argTyp.(type) {
+						case *IndexedType, *PointerType:
+							AccessExpr(arg, WriteAccess)
+						case *StructType:
+							if a.iface {
+								AccessExpr(arg, WriteAccess)
+							} else {
+								AccessExpr(arg, ReadAccess)
+							}
+						default:
+							AccessExpr(arg, ReadAccess)
+						}
 					}
+
+					for i, arg := range e.Args {
+						if !fnTyp.GetParameterAccess(i) {
+							argTyp := TypeOf(arg, Resolver)
+							classify(arg, argTyp)
+						}
+					}
+					// check for the receiver type
+					if fnTyp.receiver != nil {
+						classify(fnTyp.receiver.Definition(), fnTyp.receiver)
+					}
+				}
+			} else {
+				// this is really a type conversion call, keep going
+				for _, arg := range e.Args {
+					AccessExpr(arg, ReadAccess)
 				}
 			}
 			return
@@ -407,6 +471,8 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			}
 		case *ast.GoStmt:
 			AccessExpr(e.Call, ReadAccess)
+		case *ast.LabeledStmt:
+			AccessExpr(e.Stmt, ReadAccess)
 		default:
 			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", e, e)
 		}

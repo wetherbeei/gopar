@@ -18,7 +18,9 @@ var builtinTranslated map[string]bool = map[string]bool{
 
 func isBasicBlockNode(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl, *ast.FuncLit, *ast.IfStmt, *ast.BlockStmt:
+	case *ast.ForStmt, *ast.RangeStmt, *ast.FuncDecl, *ast.FuncLit, *ast.IfStmt,
+		*ast.BlockStmt, *ast.SelectStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt,
+		*ast.CommClause, *ast.CaseClause:
 		return true
 	}
 	return false
@@ -85,7 +87,7 @@ func (v BasicBlockPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	}
 	if isBasicBlockNode(node) {
 		newBlock := NewBasicBlock(node, block)
-		newBlock.Printf("+ new block: %T %v", node, node)
+		newBlock.Printf("+ new block: %T %+v", node, node)
 		v.cur = newBlock
 		v.pass.SetResult(node, newBlock)
 	}

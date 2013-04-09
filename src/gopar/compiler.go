@@ -158,10 +158,15 @@ func (c *Compiler) ResetPass(t PassType) {
 
 // Run all passes while dependencies are met
 func (c *Compiler) Run(pkg *Package) (err error) {
+	fmt.Printf("\x1b[33;1m%s\x1b[0m\n", strings.Repeat("=", 80))
 	fmt.Printf("\x1b[32;1mRunning package %s\x1b[0m\n", pkg.name)
 	passStatus := c.passStatus[pkg]
 	if passStatus == nil {
 		passStatus = make(map[PassType]bool)
+		// set all of the existing pass results to false
+		for pt := range c.passes {
+			passStatus[pt] = false
+		}
 		c.passStatus[pkg] = passStatus
 	}
 	for {
@@ -231,7 +236,8 @@ func (b BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
 }
 
 func RunBasicBlock(pass Pass, root *BasicBlock, p *Package) (modified bool, err error) {
-	root.Printf("\x1b[32;1mBasicBlockPass\x1b[0m %T %+v", root.node, root.node)
+	pos := p.Location(root.node.Pos())
+	root.Printf("\x1b[32;1mBasicBlockPass %s:%d\x1b[0m %T %+v", pos.Filename, pos.Line, root.node, root.node)
 	passVisitor := pass.RunBasicBlockPass(root, p)
 	n := BasicBlockVisitorImpl{pass: pass, p: p, block: root, passVisitor: passVisitor}
 	ast.Walk(n, root.node)

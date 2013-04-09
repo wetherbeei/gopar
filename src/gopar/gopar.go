@@ -72,7 +72,7 @@ func main() {
 	AddAnalysisPasses := func(compiler *Compiler) {
 		compiler.AddPass(NewDefinedTypesPass())
 		compiler.AddPass(NewBasicBlockPass())
-		compiler.AddPass(NewInvalidConstructPass())
+		//compiler.AddPass(NewInvalidConstructPass())
 		compiler.AddPass(NewCallGraphPass())
 		// analysis starts
 		compiler.AddPass(NewAccessPass())

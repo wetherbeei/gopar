@@ -24,6 +24,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 )
 
@@ -31,10 +32,28 @@ type AccessPassFuncPropogate struct {
 	BasePass
 }
 
+func StripDefinedIndex(access IdentifierGroup, data *AccessPassData) (ig IdentifierGroup) {
+	// check if an index variable is also a function argument and
+	// remove it
+	ig = access
+	newAccess := make([]Identifier, len(access.group))
+
+	copy(newAccess, access.group) // full copy
+	for idx, ident := range newAccess {
+		if _, ok := data.defines[ident.index]; ok && ident.isIndexed {
+			newAccess = newAccess[0 : idx+1]
+			newAccess[idx].isIndexed = false
+			newAccess[idx].index = ""
+		}
+		break
+	}
+	ig.group = newAccess
+	return
+}
+
 type AccessPassFuncPropogateVisitor struct {
 	pass      Pass
 	p         *Package
-	compiler  *Compiler
 	cur       *BasicBlock
 	dataBlock *AccessPassData
 	node      ast.Node
@@ -55,202 +74,182 @@ func (v AccessPassFuncPropogateVisitor) Done(block *BasicBlock) (modified bool, 
 	return
 }
 
+// TODO: this is one big function, split it up
 func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
+
+	if node != nil {
+		// decend into this node
+		v.node = node
+		return v
+	}
+	// post-order actions (all sub-nodes have been visited)
+	node = v.node
+
+	// Locate function calls
 	// Get the closest enclosing basic block for this node
-	dataBlock := v.dataBlock
 	b := v.cur
+	b.Print(node)
 	pass := v.pass
-	resolver := MakeResolver(b, v.p, v.compiler)
-	if node == nil {
-		// post-order actions (all sub-nodes have been visited)
-		node = v.node
-		// Locate function calls
-		switch t := node.(type) {
-		case *ast.CallExpr:
-			typ := TypeOf(t.Fun, resolver)
-			b.Print(typ.String())
-			switch f := t.Fun.(type) {
-			case *ast.FuncLit:
-				// go down a FuncLit branch
-			case *ast.Ident:
-				fun := v.p.Lookup(f.Name)
-				if fun == nil {
-					// builtin function, or not found
-					b.Print("Function not found", f.Name)
-					return nil
+	resolver := MakeResolver(b, v.p, v.pass.GetCompiler())
+
+	var fun *FuncType
+	var call *ast.CallExpr
+	switch t := node.(type) {
+	case *ast.CallExpr:
+
+		if fnTyp := TypeOf(t.Fun, resolver); fnTyp != nil {
+			if funcTyp, ok := fnTyp.(*FuncType); ok {
+				if funcTyp.body == nil {
+					// functions without definitions are assumed to modify all arguments
+					// in access pass
+					return v
 				}
-				funcDecl := fun.Decl.(*ast.FuncDecl)
-				funcType := funcDecl.Type
-				funcDataBlock := pass.GetCompiler().GetPassResult(BasicBlockPassType, funcDecl).(*BasicBlock).Get(AccessPassType).(*AccessPassData)
+				fun = funcTyp
+				call = t
+			} else {
+				// not a call, it's a type cast
+				return v
+			}
+			b.Print("Found function call", fnTyp.String())
+		} else {
+			// we already recorded writes for all of the arguments in access pass
+			return v
+		}
+	default:
+		return v
+	}
+	b.Printf("%T %+v %s", fun.Definition(), fun.Definition(), fun.name)
+	funcType := fun.typ
+	funcDataBlock := pass.GetCompiler().GetPassResult(BasicBlockPassType, fun.Definition()).(*BasicBlock).Get(AccessPassType).(*AccessPassData)
 
-				child := v.cur
-				parent := child.parent
-				// Now fill in the accesses this call would have made, and propogate it
-				// all the way to the top
-				var funcAccesses []IdentifierGroup // only the accesses this function made
+	// Now fill in the accesses this call would have made, and propogate it
+	// all the way to the top
+	var funcAccesses []IdentifierGroup // only the accesses this function made
 
-				// Fill in global accesses
+	// Fill in global accesses
+	for _, access := range funcDataBlock.accesses {
+		if _, ok := funcDataBlock.defines[access.group[0].id]; !ok {
+			// if there is an array access that uses an identifier block defined in 
+			// this block, change the access from b[idx] to b
+			ig := StripDefinedIndex(access, funcDataBlock)
+			b.Print("Global access", ig.String())
+			funcAccesses = append(funcAccesses, ig)
+		}
+	}
+
+	// Fill in aliased arguments
+	pos := 0 // argument position
+	for _, arg := range funcType.Params.List {
+		writeThrough := false
+		// is the argument able to be modified?
+		// builtin types (slice, map, chan), pointers
+		switch arg.Type.(type) {
+		case *ast.ArrayType, *ast.MapType, *ast.ChanType:
+			b.Printf("Pass-by-reference %v %T", arg.Names, arg.Type)
+			writeThrough = true
+		case *ast.StarExpr:
+			b.Printf("Pass-by-pointer %v %T", arg.Names, arg.Type)
+			writeThrough = true
+		}
+
+		for _, argName := range arg.Names {
+			if writeThrough {
+				callArg := call.Args[pos]
+				callIdent := &IdentifierGroup{}
+				AccessIdentBuild(callIdent, callArg, nil)
+
+				// Find all accesses to these variables
 				for _, access := range funcDataBlock.accesses {
-					if _, ok := funcDataBlock.defines[access.group[0].id]; !ok {
-						// if there is an array access that uses an identifier block defined in 
-						// this block, change the access from b[idx] to b
-						var ig IdentifierGroup = access
-						for idx, ident := range access.group {
-							if _, ok := dataBlock.defines[ident.index]; ok && ident.isIndexed {
-								ig.group = make([]Identifier, idx+1)
-								copy(ig.group, access.group)
-								parent.Printf("Leaving index scope [%s]", ig.group[idx].index)
-								ig.group[idx].isIndexed = false
-								ig.group[idx].index = ""
-							}
-							break
+					// Replace the function arg name with the callIdent prefix
+					if access.group[0].id == argName.Name {
+						// check if an index variable is also a function argument and
+						// remove it
+						ig := StripDefinedIndex(access, funcDataBlock)
+
+						newAccess := ig.group
+						// if the callsite is &a and the access is *a, make the access
+						// a for this function
+						var callIdentCopy []Identifier
+						if callIdent.group[len(callIdent.group)-1].refType == AddressOf && newAccess[len(newAccess)-1].refType == Dereference {
+							b.Print("Removing pointer alias & -> *")
+							newAccess[len(newAccess)-1].refType = NoReference
+							callIdentCopy = make([]Identifier, len(callIdent.group))
+							copy(callIdentCopy, callIdent.group)
+							callIdentCopy[len(callIdentCopy)-1].refType = NoReference
+						} else {
+							callIdentCopy = callIdent.group
 						}
-						b.Print("Global access", ig.String())
+						// replace access[0] with callIdent
+						ig.group = append(ig.group, callIdentCopy...)
+						ig.group = append(ig.group, newAccess[1:]...)
+						b.Printf("%s -> %s", access.String(), ig.String())
 						funcAccesses = append(funcAccesses, ig)
 					}
 				}
+			}
+			pos++
+		}
+	}
 
-				// Fill in aliased arguments
-				pos := 0 // argument position
-				for _, arg := range funcType.Params.List {
-					writeThrough := false
-					// is the argument able to be modified?
-					// builtin types (slice, map, chan), pointers
-					switch arg.Type.(type) {
-					case *ast.ArrayType, *ast.MapType, *ast.ChanType:
-						b.Printf("Pass-by-reference %v %T", arg.Names, arg.Type)
-						writeThrough = true
-					case *ast.StarExpr:
-						b.Printf("Pass-by-pointer %v %T", arg.Names, arg.Type)
-						writeThrough = true
-					}
+	// Propogate ONLY aliased argument accesses upwards
+	// NOTE: doesn't work with recursive functions??
 
-					for _, argName := range arg.Names {
-						if writeThrough {
-							callArg := t.Args[pos]
-							callIdent := &IdentifierGroup{}
-							AccessIdentBuild(callIdent, callArg, nil)
+	// Move upwards, replacing the placeholder access with the group of
+	// accesses made by this function. Stop at variable define boundaries
+	placeholderIdent := v.pass.GetCompiler().GetPassResult(AccessPassType, call).(*ast.Ident)
+	b.Printf("\x1b[33m>> %s\x1b[0m filling in function effects: %+v, %s", placeholderIdent.Name, call, fun.String())
 
-							// Find all accesses to these variables
-							for _, access := range funcDataBlock.accesses {
-								// Replace the function arg name with the callIdent prefix
-								if access.group[0].id == argName.Name {
-									// check if an index variable is also a function argument and
-									// remove it
-									newAccess := make([]Identifier, len(access.group))
-
-									copy(newAccess, access.group) // full copy
-									for idx, ident := range newAccess {
-										if _, ok := funcDataBlock.defines[ident.index]; ok && ident.isIndexed {
-											newAccess = newAccess[0 : idx+1]
-											newAccess[idx].isIndexed = false
-											b.Printf("Stripping array index %s", ident.index)
-											newAccess[idx].index = ""
-										}
-										break
-									}
-
-									// if the callsite is &a and the access is *a, make the access
-									// a for this function
-									var callIdentCopy []Identifier
-									if callIdent.group[len(callIdent.group)-1].refType == AddressOf && newAccess[len(newAccess)-1].refType == Dereference {
-										b.Print("Removing pointer alias & -> *")
-										newAccess[len(newAccess)-1].refType = NoReference
-										callIdentCopy = make([]Identifier, len(callIdent.group))
-										copy(callIdentCopy, callIdent.group)
-										callIdentCopy[len(callIdentCopy)-1].refType = NoReference
-									} else {
-										callIdentCopy = callIdent.group
-									}
-									// replace access[0] with callIdent
-									var ig IdentifierGroup
-									ig.t = access.t
-									ig.group = append(ig.group, callIdentCopy...)
-									ig.group = append(ig.group, newAccess[1:]...)
-									b.Printf("%s -> %s", access.String(), ig.String())
-									funcAccesses = append(funcAccesses, ig)
-								}
-							}
-						}
-						pos++
-					}
-				}
-
-				// Propogate ONLY aliased argument accesses upwards
-				// NOTE: doesn't work with recursive functions??
-
-				// Move upwards, replacing the placeholder access with the group of
-				// accesses made by this function. Stop at variable define boundaries
-				placeholderIdent := v.pass.GetCompiler().GetPassResult(AccessPassType, t).(*ast.Ident)
-				b.Printf("\x1b[33m>> %s\x1b[0m filling in function effects: %+v, %+v", placeholderIdent.Name, t, funcDecl)
-
-				// Walk up the parent blocks
-				for ; child != nil; child = child.parent {
-					// Find the placeholder
-					dataBlock := child.Get(AccessPassType).(*AccessPassData)
-					var placeholderIdx int
-					var val IdentifierGroup
-					for placeholderIdx, val = range dataBlock.accesses {
-						if val.group[0].id == placeholderIdent.Name {
-							break
-						}
-					}
-					b.Printf("Replacing placeholder at %d", placeholderIdx)
-
-					// Remove the placeholder
-					dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
-					// Insert the function accesses, do a deep copy
-					var funcAccessCopy []IdentifierGroup
-					for _, v := range funcAccesses {
-						// deep copy the identifers
-						groupCopy := make([]Identifier, len(v.group))
-						copy(groupCopy, v.group)
-						v.group = groupCopy
-						funcAccessCopy = append(funcAccessCopy, v)
-					}
-
-					b.Print(" << Propogating up")
-					for _, a := range funcAccessCopy {
-						b.Print(a.String())
-					}
-					dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], append(funcAccessCopy, dataBlock.accesses[placeholderIdx:]...)...)
-
-					// Check if the identifier leaves scope
-					for idx := 0; idx < len(funcAccesses); {
-						access := funcAccesses[idx]
-						if _, ok := dataBlock.defines[access.group[0].id]; ok {
-							b.Print("Leaving scope", access.String())
-							funcAccesses = append(funcAccesses[:idx], funcAccesses[idx+1:]...)
-						} else {
-							idx++
-						}
-					}
-
-					// Check if an index variable leaves scope
-					for accIdx, access := range funcAccesses {
-						// check if an index variable is also a function argument and
-						// remove it
-						for idx, ident := range access.group {
-							if _, ok := dataBlock.defines[ident.index]; ok && ident.isIndexed {
-								// update the real value in funcAccesses
-								access.group = access.group[0 : idx+1]
-								access.group[idx].isIndexed = false
-								b.Printf("Stripping array index %s", ident.index)
-								access.group[idx].index = ""
-								funcAccesses[accIdx] = access // write back to the original storage!
-							}
-							break
-						}
-					}
-				}
-				return nil
+	// Walk up the parent blocks
+	child := b
+	for ; child != nil; child = child.parent {
+		// Find the placeholder
+		dataBlock := child.Get(AccessPassType).(*AccessPassData)
+		var placeholderIdx int
+		var val IdentifierGroup
+		for placeholderIdx, val = range dataBlock.accesses {
+			if val.group[0].id == placeholderIdent.Name {
+				break
 			}
 		}
-		return v
-	}
-	v.node = node
+		b.Printf("Replacing placeholder at %d", placeholderIdx)
 
-	return v
+		// Remove the placeholder
+		dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
+		// Insert the function accesses, do a deep copy
+		var funcAccessCopy []IdentifierGroup
+		for _, v := range funcAccesses {
+			// deep copy the identifers
+			groupCopy := make([]Identifier, len(v.group))
+			copy(groupCopy, v.group)
+			v.group = groupCopy
+			funcAccessCopy = append(funcAccessCopy, v)
+		}
+
+		b.Print(" << Propogating up")
+		for _, a := range funcAccessCopy {
+			b.Print(a.String())
+		}
+		dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], append(funcAccessCopy, dataBlock.accesses[placeholderIdx:]...)...)
+
+		// Check if the identifier leaves scope
+		for idx := 0; idx < len(funcAccesses); {
+			access := funcAccesses[idx]
+			if _, ok := dataBlock.defines[access.group[0].id]; ok {
+				b.Print("Leaving scope", access.String())
+				funcAccesses = append(funcAccesses[:idx], funcAccesses[idx+1:]...)
+			} else {
+				idx++
+			}
+		}
+
+		// Check if an index variable leaves scope
+		for accIdx, access := range funcAccesses {
+			// check if an index variable is also a function argument and
+			// remove it
+			funcAccesses[accIdx] = StripDefinedIndex(access, dataBlock)
+		}
+	}
+	return nil
 }
 
 func NewAccessPassFuncPropogate() *AccessPassFuncPropogate {
@@ -280,11 +279,16 @@ func (pass *AccessPassFuncPropogate) RunBasicBlockPass(block *BasicBlock, p *Pac
 
 func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	callGraph := pass.compiler.GetPassResult(CallGraphPassType, p).(*CallGraphPassData)
-	run := make(map[*ast.BlockStmt]bool) // which functions have been propogated
-	var orderGraph func(map[*ast.BlockStmt][]*ast.BlockStmt, *ast.BlockStmt) []*ast.BlockStmt
-	orderGraph = func(graph map[*ast.BlockStmt][]*ast.BlockStmt, f *ast.BlockStmt) (result []*ast.BlockStmt) {
+	run := make(map[*FuncType]bool) // which functions have been propogated
+	var orderGraph func(map[*FuncType][]*FuncType, *FuncType) []*FuncType
+	added := make(map[*FuncType]bool)
+	orderGraph = func(graph map[*FuncType][]*FuncType, f *FuncType) (result []*FuncType) {
+		fmt.Println(f.String())
 		for _, fn := range callGraph.graph[f] {
-			result = append(result, orderGraph(graph, fn)...)
+			if !added[fn] {
+				added[fn] = true // prevent a recursive loop
+				result = append(result, orderGraph(graph, fn)...)
+			}
 		}
 		result = append(result, f)
 		return
@@ -293,7 +297,7 @@ func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (
 	// spit out every function in the call graph with all of their dependencies
 	// listed before them...you can start from the "main" function for the main
 	// package, but supporting packages don't have a single entry point
-	var runOrder []*ast.BlockStmt
+	var runOrder []*FuncType
 	for k, _ := range callGraph.graph {
 		fnOrder := orderGraph(callGraph.graph, k)
 		runOrder = append(runOrder, fnOrder...)
@@ -302,7 +306,10 @@ func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (
 		if fnDecl == nil || run[fnDecl] {
 			continue
 		}
-		block := pass.compiler.GetPassResult(BasicBlockPassType, fnDecl).(*BasicBlock)
+		if fnDecl.body == nil {
+			continue
+		}
+		block := pass.compiler.GetPassResult(BasicBlockPassType, fnDecl.body).(*BasicBlock)
 
 		// Manually run the basic block pass in inverse call graph order
 		var mod bool

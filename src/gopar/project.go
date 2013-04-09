@@ -138,7 +138,7 @@ func (p *Project) write(dir string, pkg *Package) (err error) {
 	}
 	pkgPath := path.Join(srcDir, pkgName)
 	os.Mkdir(pkgPath, 0777)
-	filePath := path.Join(pkgPath, pkgName+".go")
+	filePath := path.Join(pkgPath, pkgName+"_gopar.go")
 	f, err = os.Create(filePath)
 	if err != nil {
 		return
