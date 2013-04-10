@@ -143,11 +143,13 @@ func (t *BaseType) AddMethod(name string, f *FuncType) {
 
 func (t *BaseType) Method(name string) *FuncType {
 	if method, ok := t.methods[name]; ok {
+		fmt.Println(name, "=", method)
 		return method
 	}
 	if t.underlying != nil {
 		return t.underlying.Method(name)
 	}
+	fmt.Println("METHOD NOT FOUND", name, t.methods)
 	return nil
 }
 
@@ -302,6 +304,7 @@ func (t *StructType) Complete(resolver Resolver) {
 			case *ast.FuncType:
 				methodTyp := newMethodType(m, nil, t)
 				methodTyp.Complete(resolver)
+				methodTyp.pointerMethod = true // all interface methods take pointers
 				for _, name := range method.Names {
 					t.AddMethod(name.Name, methodTyp)
 				}
@@ -608,6 +611,7 @@ func (t *FuncType) Call(args []Type) Type {
 	if t.customCall != nil {
 		return t.customCall(args)
 	} else {
+		fmt.Println("CALL", t.results)
 		if len(t.results) > 1 {
 			return newMultiType(t.results)
 		} else {
@@ -848,6 +852,7 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		// is this a type conversion or a function call?
 		switch callType.(type) {
 		case *FuncType:
+			fmt.Println("CALLING")
 			// gather arguments to pass to Call()
 			var args []Type
 			for _, argExpr := range t.Args {
@@ -855,6 +860,7 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 			}
 			return callType.Call(args)
 		default:
+			fmt.Println("TYPE CONV")
 			// int32(X)
 			// deal with (*int32) parentheses manually
 			var retTyp Type
@@ -938,6 +944,8 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 			// only T methods allowed
 			if !methodTyp.method || (methodTyp.method && methodTyp.pointerMethod) {
 				return methodTyp
+			} else {
+				fmt.Println("Method pointer-only", methodTyp)
 			}
 		}
 		return nil
