@@ -262,7 +262,7 @@ type StructType struct {
 	*BaseType
 	fieldOrder []string
 	fields     map[string]Type
-	embedded   []*StructType
+	embedded   []Type // could be *StructType or *PointerType
 	iface      bool
 }
 
@@ -289,7 +289,7 @@ func (t *StructType) Complete(resolver Resolver) {
 				AccessIdentBuild(&ig, field.Type, nil)
 				name := ig.group[len(ig.group)-1].id
 				t.addField(name, fieldTyp)
-				t.embedded = append(t.embedded, fieldTyp.(*StructType))
+				t.embedded = append(t.embedded, fieldTyp)
 			} else {
 				for _, name := range field.Names {
 					t.addField(name.Name, fieldTyp)
@@ -327,7 +327,7 @@ func (t *StructType) Fields() []string {
 }
 
 func (t *StructType) Field(name string) Type {
-	if builtin := t.fields[name]; builtin != nil {
+	if builtin, ok := t.fields[name]; ok {
 		return builtin
 	}
 	// else search the embedded fields
@@ -360,7 +360,7 @@ func (t *StructType) String() string {
 		buffer.WriteString("interface {")
 	}
 	for i, field := range t.Fields() {
-		buffer.WriteString(fmt.Sprintf("%s=%s", field, t.Field(field).String()))
+		buffer.WriteString(fmt.Sprintf("%s", field))
 		if i != len(t.Fields())-1 {
 			buffer.WriteString(", ")
 		}
@@ -817,7 +817,6 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 				return result
 			}
 		}
-		fmt.Println("Top-level defines of:", p.name, p)
 		packageScope := c.GetPassResult(DefinedTypesPassType, p).(*DefinedTypesData)
 		if identType, ok := packageScope.defined[ident]; ok {
 			return identType

@@ -259,7 +259,10 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		case *ast.FuncDecl:
 			if e.Recv != nil {
 				r := e.Recv.List[0]
-				Define(r.Names[0].Name, r.Type)
+				if len(r.Names) > 0 {
+					// it's valid to declare a recevier without naming the parameter
+					Define(r.Names[0].Name, r.Type)
+				}
 			}
 			AccessExpr(e.Type, ReadAccess)
 			if e.Body != nil {
@@ -325,7 +328,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.Init, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.TypeSwitchStmt:
-			AccessExpr(e.Init, ReadAccess)
+			if e.Init != nil {
+				AccessExpr(e.Init, ReadAccess)
+			}
 			AccessExpr(e.Assign, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.CommClause:
