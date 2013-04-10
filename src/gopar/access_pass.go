@@ -438,6 +438,12 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 						}
 					}
 
+					// TODO/safety bug: what if an argument is a function?
+					// If we know the exact function foo(math.Mul), then propogate th
+					// accesses. If the function is just a pointer and we can't see the
+					// function definition, assume it modifies some external state.
+					//
+					// Is this handled by setting function types to be pass-by-reference?
 					for i, arg := range e.Args {
 						if !fnTyp.GetParameterAccess(i) {
 							argTyp := TypeOf(arg, Resolver)
@@ -476,6 +482,8 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.Low, ReadAccess)
 			AccessExpr(e.High, ReadAccess)
 			AccessExpr(e.X, t)
+		case *ast.DeferStmt:
+			AccessExpr(e.Call, ReadAccess)
 		default:
 			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", e, e)
 		}

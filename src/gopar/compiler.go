@@ -255,11 +255,13 @@ func RunBasicBlock(pass Pass, root *BasicBlock, p *Package) (modified bool, err 
 func (c *Compiler) RunPass(pass Pass, pkg *Package) (modified bool, err error) {
 	switch pass.GetPassMode() {
 	case ModulePassMode:
+		fmt.Printf("\x1b[32;1mModulePass %s\x1b[0m\n", pkg.name)
 		return pass.RunModulePass(pkg.file, pkg)
 	case FunctionPassMode:
 		for _, decl := range pkg.file.Decls {
 			if fnDecl, ok := decl.(*ast.FuncDecl); ok {
-				fmt.Println("\x1b[32;1mFunctionPass\x1b[0m", fnDecl.Name)
+				pos := pkg.Location(fnDecl.Pos())
+				fmt.Printf("\x1b[32;1mFunctionPass %s:%d\x1b[0m %s\n", pos.Filename, pos.Line, fnDecl.Name)
 				var passMod bool
 				passMod, err = pass.RunFunctionPass(fnDecl, pkg)
 				modified = modified || passMod

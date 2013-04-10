@@ -110,7 +110,9 @@ func (p *Project) load(pkgPath string) (err error) {
 			scopes = append(scopes, f.Scope)
 			f.Scope.Outer = nil
 		}
-		mergedFile := ast.MergePackageFiles(pkg, ast.FilterFuncDuplicates|ast.FilterImportDuplicates)
+		// BUG in go/ast: ast.FilterFuncDuplicates doesn't handle receiver methods
+		// I don't trust filter FilterImportDuplicates either, so remove them
+		mergedFile := ast.MergePackageFiles(pkg, 0)
 		p.packages[pkgPath] = &Package{project: p, name: name, file: mergedFile, scopes: scopes}
 		return
 	}

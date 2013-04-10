@@ -11,7 +11,8 @@ import (
 )
 
 type DefinedTypesData struct {
-	defined map[string]Type
+	defined  map[string]Type
+	embedded []Type // used when other packages import . "something"
 }
 
 func NewDefinedTypesData() *DefinedTypesData {
@@ -48,6 +49,15 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 	var methods []*ast.FuncDecl
 	var defined map[string]Type = make(map[string]Type)
 	Define := func(name string, t Type) {
+		if val, exists := defined[name]; exists {
+			// if they're packages with the same name, ignore it
+			pkg1, ok1 := val.(*PackageType)
+			pkg2, ok2 := val.(*PackageType)
+			if !ok1 || !ok2 || pkg1.path != pkg2.path {
+				err = fmt.Errorf("Redefining identifier %s = %s with %s", name, val.String(), t.String())
+				return
+			}
+		}
 		defined[name] = t // TODO: write directly to data.defined?
 	}
 	// This can get messy; top-level definitions don't have to be done in any
@@ -61,6 +71,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 				Define(t.Name.Name, TypeDecl(t))
 			}
 		case *ast.GenDecl:
+			var prev ast.Expr // used for constants
 			for _, spec := range t.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
@@ -73,12 +84,19 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 							Define(name.Name, newFutureType(s.Type))
 						}
 					} else {
-						// all constants
+						// constants
+						// might be iota declarations, so if s.Values is missing then use
+						// the previous declaration
 						for i, name := range s.Names {
-							Define(name.Name, newFutureType(s.Values[i]))
+							if i < len(s.Values) {
+								prev = s.Values[i]
+							}
+							Define(name.Name, newFutureType(prev))
 						}
 					}
 				case *ast.ImportSpec:
+					// TODO: package imports should only be for this file
+					// http://golang.org/ref/spec#Declarations_and_scope
 					var name string
 					var path string
 					if s.Name != nil {
@@ -119,7 +137,11 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 						}
 						pkgType := TypeDecl(s)
 						pkgType.Complete(packageResolver)
-						Define(name, pkgType)
+						if name == "." {
+							data.embedded = append(data.embedded, pkgType)
+						} else {
+							Define(name, pkgType)
+						}
 					}
 				}
 			}

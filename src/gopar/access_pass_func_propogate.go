@@ -91,7 +91,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	b.Print(node)
 	pass := v.pass
 	resolver := MakeResolver(b, v.p, v.pass.GetCompiler())
-
+	b.Print("Current package:", v.p.name)
 	var fun *FuncType
 	var call *ast.CallExpr
 	switch t := node.(type) {
@@ -118,6 +118,13 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	default:
 		return v
 	}
+	placeholderIdent, ok := v.pass.GetCompiler().GetPassResult(AccessPassType, call).(*ast.Ident)
+	if !ok {
+		// function literal handled already by access pass
+		b.Print("Ignoring callsite", call)
+		b.Print(placeholderIdent.Name)
+		return nil
+	}
 	b.Printf("%T %+v %s", fun.Definition(), fun.Definition(), fun.name)
 	funcType := fun.typ
 	funcDataBlock := pass.GetCompiler().GetPassResult(BasicBlockPassType, fun.Definition()).(*BasicBlock).Get(AccessPassType).(*AccessPassData)
@@ -141,6 +148,10 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	// func foo(arg) {}
 	// foo(callArg) -> translate accesses inside foo to "arg" to "callArg"s
 	// CallExpr site
+	//
+	// func (s *Struct) foo() {s.a.b = 5} (s = argName)
+	// z.x.foo() where z.x is struct (z.x = callArg)
+	// propogate WriteAccess z.x.a.b
 	propogateFn := func(callArg ast.Expr, arg *ast.Field, argName *ast.Ident) {
 		callIdent := &IdentifierGroup{}
 		AccessIdentBuild(callIdent, callArg, nil)
@@ -148,12 +159,14 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 		// Find all accesses to these variables
 		for _, access := range funcDataBlock.accesses {
 			// Replace the function arg name with the callIdent prefix
+			// the last part of 
 			if access.group[0].id == argName.Name {
 				// check if an index variable is also a function argument and
 				// remove it
 				ig := StripDefinedIndex(access, funcDataBlock)
 
-				newAccess := ig.group
+				newAccess := make([]Identifier, len(ig.group))
+				copy(newAccess, ig.group)
 				// if the callsite is &a and the access is *a, make the access
 				// a for this function
 				var callIdentCopy []Identifier
@@ -167,6 +180,8 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					callIdentCopy = callIdent.group
 				}
 				// replace access[0] with callIdent
+				b.Print(callIdentCopy)
+				b.Print(newAccess[1:])
 				ig.group = append(ig.group, callIdentCopy...)
 				ig.group = append(ig.group, newAccess[1:]...)
 				b.Printf("%s -> %s", access.String(), ig.String())
@@ -202,11 +217,9 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	}
 
 	// Propogate ONLY aliased argument accesses upwards
-	// NOTE: doesn't work with recursive functions??
 
 	// Move upwards, replacing the placeholder access with the group of
 	// accesses made by this function. Stop at variable define boundaries
-	placeholderIdent := v.pass.GetCompiler().GetPassResult(AccessPassType, call).(*ast.Ident)
 	b.Printf("\x1b[33m>> %s\x1b[0m filling in function effects: %+v, %s", placeholderIdent.Name, call, fun.String())
 
 	// Walk up the parent blocks
@@ -290,17 +303,26 @@ func (pass *AccessPassFuncPropogate) RunBasicBlockPass(block *BasicBlock, p *Pac
 func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	callGraph := pass.compiler.GetPassResult(CallGraphPassType, p).(*CallGraphPassData)
 	run := make(map[*FuncType]bool) // which functions have been propogated
-	var orderGraph func(map[*FuncType][]*FuncType, *FuncType) []*FuncType
+	var orderGraph func(*FuncType) []*FuncType
 	added := make(map[*FuncType]bool)
-	orderGraph = func(graph map[*FuncType][]*FuncType, f *FuncType) (result []*FuncType) {
-		fmt.Println(f.String())
-		for _, fn := range callGraph.graph[f] {
-			if !added[fn] {
-				added[fn] = true // prevent a recursive loop
-				result = append(result, orderGraph(graph, fn)...)
+	orderGraph = func(f *FuncType) (result []*FuncType) {
+		funcGraph := callGraph.graph[f]
+		// only add functions from the current package
+		fmt.Println(f, funcGraph)
+		// some functions found are literals, ignore those (handled in access pass
+		// propogate)
+		if funcGraph != nil && funcGraph.pkg == p.name {
+			fmt.Println(f.String())
+			for _, fn := range funcGraph.calls {
+				if !added[fn] {
+					// only add functions with blocks defined in this package
+					added[fn] = true // prevent a recursive loop
+					result = append(result, orderGraph(fn)...)
+				}
 			}
+
+			result = append(result, f)
 		}
-		result = append(result, f)
 		return
 	}
 
@@ -309,11 +331,11 @@ func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (
 	// package, but supporting packages don't have a single entry point
 	var runOrder []*FuncType
 	for k, _ := range callGraph.graph {
-		fnOrder := orderGraph(callGraph.graph, k)
+		fnOrder := orderGraph(k)
 		runOrder = append(runOrder, fnOrder...)
 	}
 	for _, fnDecl := range runOrder {
-		if fnDecl == nil || run[fnDecl] {
+		if run[fnDecl] {
 			continue
 		}
 		if fnDecl.body == nil {

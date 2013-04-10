@@ -24,7 +24,7 @@ func init() {
 	builtin := []string{
 		"uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64",
 		"float32", "float64", "complex64", "complex128", "uint", "int", "uintptr",
-		"rune", "byte", "bool", "error", "nil",
+		"rune", "byte", "bool", "nil",
 	}
 	for _, ident := range builtin {
 		BuiltinTypes[ident] = TypeDecl(&ast.Ident{Name: ident})
@@ -34,6 +34,11 @@ func init() {
 	BuiltinTypes["false"] = BuiltinTypes["bool"]
 	BuiltinTypes["iota"] = BuiltinTypes["int"]
 	BuiltinTypes["string"] = newCustomIndexedType(BuiltinTypes["byte"], BuiltinTypes["int"], true)
+	errorTyp := newStructType(nil)
+	errorTyp.AddMethod("Error", newCustomFuncType(func(args []Type) Type {
+		return BuiltinTypes["string"]
+	}).SetParameterAccess(true))
+	BuiltinTypes["error"] = errorTyp
 
 	// builtin functions
 	BuiltinTypes["len"] = newCustomFuncType(func(args []Type) Type {
@@ -154,11 +159,17 @@ func (t *BaseType) Dereference() Type {
 }
 
 func (t *BaseType) IndexKey() Type {
-	return t.underlying.IndexKey()
+	if t.underlying != nil {
+		return t.underlying.IndexKey()
+	}
+	return nil
 }
 
 func (t *BaseType) IndexValue() Type {
-	return t.underlying.IndexValue()
+	if t.underlying != nil {
+		return t.underlying.IndexValue()
+	}
+	return nil
 }
 
 func (t *BaseType) Call(args []Type) Type {
@@ -176,6 +187,9 @@ func (t *BaseType) CType() string {
 }
 
 func (t *BaseType) Math(other Type, op token.Token) Type {
+	if t.underlying != nil {
+		return BinaryOp(t.underlying, op, other)
+	}
 	return BinaryOp(t, op, other)
 }
 
@@ -215,7 +229,7 @@ func (t *BaseType) MethodSet() string {
 
 type ConstType struct {
 	*BaseType
-	typ Type // actual type of this constant
+	value string
 }
 
 func newConstType(node ast.Node) *ConstType {
@@ -227,21 +241,18 @@ func newConstType(node ast.Node) *ConstType {
 func (t *ConstType) Complete(resolver Resolver) {
 	switch t.Node.(*ast.BasicLit).Kind {
 	case token.FLOAT:
-		t.typ = resolver("float64")
+		t.BaseType.underlying = resolver("float64")
 	case token.INT:
-		t.typ = resolver("int")
+		t.BaseType.underlying = resolver("int")
 	case token.STRING:
-		t.typ = resolver("string")
+		t.BaseType.underlying = resolver("string")
 	}
+	t.value = t.Node.(*ast.BasicLit).Value
 	return
 }
 
-func (t *ConstType) Math(other Type, op token.Token) Type {
-	return BinaryOp(t.typ, op, other)
-}
-
 func (t *ConstType) String() string {
-	return fmt.Sprintf("%s=%s", t.typ.String(), t.Node.(*ast.BasicLit).Value)
+	return fmt.Sprintf("%s=%s", t.BaseType.String(), t.value)
 }
 
 // Structs AND Interfaces
@@ -622,6 +633,10 @@ func (t *FuncType) GetParameterAccess(index int) bool {
 	return t.noWriteMask[index]
 }
 
+func (t *FuncType) PassByValue() bool {
+	return false
+}
+
 func (t *FuncType) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString("func ")
@@ -635,6 +650,7 @@ func (t *FuncType) String() string {
 	}
 	buffer.WriteString("(")
 	for i, param := range t.params {
+		//fmt.Printf("%+v\n", t.params)
 		buffer.WriteString(param.String())
 		if i < len(t.params)-1 {
 			buffer.WriteString(", ")
@@ -697,6 +713,7 @@ func (t *FutureType) Complete(resolver Resolver) {
 type PackageType struct {
 	*BaseType
 	resolver Resolver
+	path     string
 }
 
 func newPackageType(node ast.Node) Type {
@@ -709,6 +726,7 @@ func (t *PackageType) Complete(resolver Resolver) {
 	// TODO: fix the double-complete in defined types pass
 	if t.resolver == nil {
 		t.resolver = resolver
+		t.path = t.Node.(*ast.ImportSpec).Path.Value
 	}
 }
 
@@ -727,7 +745,7 @@ func (t *PackageType) Method(name string) *FuncType {
 func (t *PackageType) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString("package ")
-	buffer.WriteString(t.Node.(*ast.ImportSpec).Path.Value)
+	buffer.WriteString(t.path)
 	return buffer.String()
 }
 
@@ -795,9 +813,15 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 				return result
 			}
 		}
+		fmt.Println("Top-level defines of:", p.name, p)
 		packageScope := c.GetPassResult(DefinedTypesPassType, p).(*DefinedTypesData)
 		if identType, ok := packageScope.defined[ident]; ok {
 			return identType
+		}
+		for _, embedded := range packageScope.embedded {
+			if identType := embedded.Field(ident); identType != nil {
+				return identType
+			}
 		}
 		if identType, ok := BuiltinTypes[ident]; ok {
 			return identType
@@ -842,6 +866,11 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 			}
 			return retTyp
 		}
+	case *ast.FuncType:
+		// for arguments/local variables that are functions
+		funcTyp := newFuncType(t, nil)
+		funcTyp.Complete(resolver)
+		return funcTyp
 	case *ast.Ident:
 		return resolver(t.Name)
 	case *ast.BasicLit:
@@ -850,7 +879,7 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		return constTyp
 	case *ast.IndexExpr:
 		indexer := TypeOf(t.X, resolver)
-		indexer.Complete(resolver)
+		fmt.Println(indexer)
 		return indexer.IndexValue()
 	case *ast.UnaryExpr:
 		// &something
@@ -893,6 +922,7 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		return indexTyp
 	case *ast.SelectorExpr:
 		innerTyp := TypeOf(t.X, resolver)
+		fmt.Printf("%T %+v\n", innerTyp, innerTyp)
 		if fieldTyp := innerTyp.Field(t.Sel.Name); fieldTyp != nil {
 			return fieldTyp
 		}

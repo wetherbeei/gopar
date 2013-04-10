@@ -14,18 +14,23 @@ import (
 	"go/ast"
 )
 
+type FunctionCallGraph struct {
+	pkg   string      // name of the package this function is in
+	calls []*FuncType // all of the functions called by this function
+}
+
 type CallGraphPass struct {
 	BasePass
 	funcGraph []*FuncType
 }
 
 type CallGraphPassData struct {
-	graph map[*FuncType][]*FuncType // function -> [dependent functions]
+	graph map[*FuncType]*FunctionCallGraph // function -> [dependent functions]
 }
 
 func NewCallGraphPassData() *CallGraphPassData {
 	return &CallGraphPassData{
-		graph: make(map[*FuncType][]*FuncType),
+		graph: make(map[*FuncType]*FunctionCallGraph),
 	}
 }
 
@@ -62,6 +67,7 @@ func (v *CallGraphPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 					fmt.Println("Found function call to", funcTyp.String())
 					v.pass.funcGraph = append(v.pass.funcGraph, funcTyp)
 				} else {
+					// a type conversion int(x)
 					fmt.Println("Unknown call", fnTyp.String())
 				}
 			}
@@ -100,7 +106,7 @@ func (pass *CallGraphPass) RunFunctionPass(fun *ast.FuncDecl, p *Package) (modif
 		fnTyp = resolver(name).(*FuncType)
 	}
 	block.Print("Call graph", fnTyp.String())
-	callGraph.graph[fnTyp] = pass.funcGraph
+	callGraph.graph[fnTyp] = &FunctionCallGraph{pkg: p.name, calls: pass.funcGraph}
 	fmt.Println(fun.Name.Name, pass.funcGraph)
 	pass.funcGraph = nil
 	return
