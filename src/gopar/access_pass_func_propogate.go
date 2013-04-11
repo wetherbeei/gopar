@@ -90,6 +90,7 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	b := v.cur
 	b.Print(node)
 	pass := v.pass
+	// only use this resolver at the CallExpr site
 	resolver := MakeResolver(b, v.p, v.pass.GetCompiler())
 	b.Print("Current package:", v.p.name)
 	var fun *FuncType
@@ -191,8 +192,9 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 
 	// Fill in aliased arguments
 	pos := 0 // argument position
+
 	for _, arg := range funcType.Params.List {
-		writeThrough := !TypeOfDecl(arg.Type, resolver).PassByValue()
+		writeThrough := !fun.GetParameterAccess(pos)
 		// is the argument able to be modified?
 		// builtin types (slice, map, chan), pointers
 

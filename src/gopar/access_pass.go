@@ -220,6 +220,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	// This is called recursively, starting with the block level
 	// Don't recurse down into other BasicBlock statements, instead manually
 	// call pass.RunBasicBlockPass()
+	var previousDecl ast.Expr // for constant defines
 	AccessExpr = func(node ast.Node, t AccessType) {
 		if node == nil {
 			return
@@ -365,6 +366,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		case *ast.DeclStmt:
 			AccessExpr(e.Decl, ReadAccess)
 		case *ast.GenDecl:
+			previousDecl = nil // for constants
 			for _, s := range e.Specs {
 				AccessExpr(s, ReadAccess)
 			}
@@ -377,7 +379,10 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			} else {
 				// all constants
 				for i, name := range e.Names {
-					Define(name.Name, e.Values[i])
+					if i < len(e.Values) {
+						previousDecl = e.Values[i]
+					}
+					Define(name.Name, previousDecl)
 				}
 			}
 

@@ -60,8 +60,8 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 		}
 		defined[name] = t // TODO: write directly to data.defined?
 	}
-	// This can get messy; top-level definitions don't have to be done in any
-	// order
+	// Top-level definitions don't have to be done in any order, so use the 
+	// FutureType
 	for _, decl := range file.Decls {
 		switch t := decl.(type) {
 		case *ast.FuncDecl:

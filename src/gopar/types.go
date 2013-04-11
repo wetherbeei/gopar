@@ -49,10 +49,10 @@ func init() {
 
 	BuiltinTypes["new"] = newCustomFuncType(func(args []Type) Type {
 		return newPointerTypeFromT(args[0])
-	})
+	}).SetParameterAccess(true)
 	BuiltinTypes["make"] = newCustomFuncType(func(args []Type) Type {
 		return args[0]
-	})
+	}).SetParameterAccess(true)
 	BuiltinTypes["append"] = newCustomFuncType(func(args []Type) Type {
 		return args[0]
 	}).SetParameterAccess(false)
@@ -72,19 +72,20 @@ func init() {
 	BuiltinTypes["complex"] = newCustomFuncType(func(args []Type) Type {
 		width := args[0].Definition().(*ast.Ident).Name[len("float"):]
 		return BuiltinTypes["complex"+width]
-	})
+	}).SetParameterAccess(true)
 	BuiltinTypes["real"] = newCustomFuncType(func(args []Type) Type {
 		width := args[0].Definition().(*ast.Ident).Name[len("complex"):]
 		return BuiltinTypes["float"+width]
-	})
+	}).SetParameterAccess(true)
 	BuiltinTypes["imag"] = BuiltinTypes["real"]
 
 	BuiltinTypes["panic"] = newCustomFuncType(func(args []Type) Type {
 		return nil
-	})
+	}).SetParameterAccess(true)
+
 	BuiltinTypes["recover"] = newCustomFuncType(func(args []Type) Type {
 		return nil // TODO: this should return interface{}
-	})
+	}).SetParameterAccess(true)
 
 	BuiltinTypes["print"] = newCustomFuncType(func(args []Type) Type {
 		return nil
@@ -239,7 +240,10 @@ func (t *BaseType) MethodSet() string {
 	var buffer bytes.Buffer
 	if len(t.methods) > 0 {
 		buffer.WriteString(" methods{")
-		for k := range t.methods {
+		for k, method := range t.methods {
+			if method.pointerMethod {
+				buffer.WriteString("*")
+			}
 			buffer.WriteString(k + ",")
 		}
 		buffer.WriteString("}")
@@ -604,7 +608,12 @@ func (t *FuncType) Complete(resolver Resolver) {
 		}
 		for _, arg := range expr.Params.List {
 			argType := TypeOfDecl(arg.Type, resolver)
-			for _ = range arg.Names {
+			// no name args
+			i := len(arg.Names)
+			if i == 0 {
+				i = 1
+			}
+			for j := 0; j < i; j++ {
 				t.params = append(t.params, argType)
 			}
 			if _, ellipsis := arg.Type.(*ast.Ellipsis); ellipsis {
@@ -649,9 +658,13 @@ func (t *FuncType) SetParameterAccess(mask ...bool) *FuncType {
 	return t // allow method chaining
 }
 
+// Return true if this parameter is pass-by-value, false otherwise
 func (t *FuncType) GetParameterAccess(index int) bool {
 	if t.noWriteMask == nil {
-		return false
+		if len(t.params) <= index {
+			return t.params[len(t.params)-1].PassByValue()
+		}
+		return t.params[index].PassByValue()
 	}
 	if len(t.noWriteMask) <= index {
 		// return the value of the last argument for "..."" functions
@@ -964,23 +977,10 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		if fieldTyp := innerTyp.Field(t.Sel.Name); fieldTyp != nil {
 			return fieldTyp
 		}
-		// enforce *T vs T method sets here
 
+		// TODO: enforce *T vs T method sets here?
 		methodTyp := innerTyp.Method(t.Sel.Name)
-		fmt.Println(innerTyp.String(), methodTyp)
-		switch innerTyp.(type) {
-		case *PointerType:
-			// both *T and T methods allowed
-			return methodTyp
-		default:
-			// only T methods allowed
-			if !methodTyp.method || (methodTyp.method && methodTyp.pointerMethod) {
-				return methodTyp
-			} else {
-				fmt.Println("Method pointer-only", methodTyp)
-			}
-		}
-		return nil
+		return methodTyp
 	case *ast.TypeAssertExpr:
 		if t.Type == nil {
 			// x.(type) switch statement
