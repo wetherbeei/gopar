@@ -78,6 +78,11 @@ func init() {
 	BuiltinTypes["recover"] = newCustomFuncType(func(args []Type) Type {
 		return nil // TODO: this should return interface{}
 	})
+
+	BuiltinTypes["print"] = newCustomFuncType(func(args []Type) Type {
+		return nil
+	}).SetParameterAccess(true)
+
 	// builtin packages
 
 	// unsafe
@@ -129,11 +134,17 @@ func (t *BaseType) Definition() ast.Node {
 }
 
 func (t *BaseType) Fields() []string {
-	return t.underlying.Fields()
+	if t.underlying != nil {
+		return t.underlying.Fields()
+	}
+	return nil
 }
 
 func (t *BaseType) Field(name string) Type {
-	return t.underlying.Field(name)
+	if t.underlying != nil {
+		return t.underlying.Field(name)
+	}
+	return nil
 }
 
 // Methods get added to the current type
@@ -429,8 +440,9 @@ func (t *IndexedType) IndexKey() Type {
 	return t.key
 }
 
+// IndexValue will return a MultiType for the val, ok := map[key] expressions
 func (t *IndexedType) IndexValue() Type {
-	return t.value
+	return newMultiType(t.value, BuiltinTypes["bool"])
 }
 
 func (t *IndexedType) PassByValue() bool {
@@ -613,7 +625,7 @@ func (t *FuncType) Call(args []Type) Type {
 	} else {
 		fmt.Println("CALL", t.results)
 		if len(t.results) > 1 {
-			return newMultiType(t.results)
+			return newMultiType(t.results...)
 		} else {
 			return t.results[0]
 		}
@@ -686,7 +698,7 @@ type MultiType struct {
 	values []Type
 }
 
-func newMultiType(values []Type) *MultiType {
+func newMultiType(values ...Type) *MultiType {
 	t := &MultiType{
 		BaseType: newBaseType(values[0].Definition()),
 		values:   values,
@@ -834,17 +846,22 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 }
 
 func TypeOf(expr ast.Node, resolver Resolver) Type {
-	return typeOf(expr, resolver, false)
+	fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
+	t := typeOf(expr, resolver, false)
+	fmt.Printf("==> %s\n", t)
+	return t
 }
 
 // Used to find the types of arguments or definitions, they vary by how they
 // handle *pointers
 func TypeOfDecl(expr ast.Node, resolver Resolver) Type {
-	return typeOf(expr, resolver, true)
+	fmt.Printf("TypeOfDecl (%T %+v)\n", expr, expr)
+	t := typeOf(expr, resolver, true)
+	fmt.Printf("==> %s\n", t)
+	return t
 }
 
 func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
-	fmt.Printf("TypeOf %T %+v\n", expr, expr)
 	switch t := expr.(type) {
 	case *ast.CallExpr:
 		callType := TypeOf(t.Fun, resolver)
@@ -873,9 +890,14 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		}
 	case *ast.FuncType:
 		// for arguments/local variables that are functions
-		funcTyp := newFuncType(t, nil)
+		funcTyp := TypeDecl(t)
 		funcTyp.Complete(resolver)
 		return funcTyp
+	case *ast.InterfaceType:
+		// for arguments/local variables that are interfaces
+		ifaceTyp := TypeDecl(t)
+		ifaceTyp.Complete(resolver)
+		return ifaceTyp
 	case *ast.Ident:
 		return resolver(t.Name)
 	case *ast.BasicLit:
@@ -949,10 +971,14 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		}
 		return nil
 	case *ast.TypeAssertExpr:
+		if t.Type == nil {
+			// x.(type) switch statement
+			return TypeOf(t.X, resolver)
+		}
 		assertedTyp := TypeOfDecl(t.Type, resolver)
 		// possibly 2 return values, but by default MultiType will act like the
 		// first type
-		return newMultiType([]Type{assertedTyp, BuiltinTypes["bool"]})
+		return newMultiType(assertedTyp, BuiltinTypes["bool"])
 	case *ast.ParenExpr:
 		return TypeOf(t.X, resolver)
 	case *ast.Ellipsis:

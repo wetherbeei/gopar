@@ -71,10 +71,7 @@ func (p *Project) load(pkgPath string) (err error) {
 		return
 	}
 	if pkgPath == "C" {
-		fmt.Println("Added virtual package", pkgPath)
-		// virtual package, set it to nil
-		p.packages[pkgPath] = nil
-		return
+		panic("cgo not supported")
 	}
 	buildPkg, err := build.Default.Import(pkgPath, ".", 0)
 	if err != nil {

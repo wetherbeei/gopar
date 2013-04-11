@@ -328,9 +328,11 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.Init, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.TypeSwitchStmt:
+			// v := x.(type)
 			if e.Init != nil {
 				AccessExpr(e.Init, ReadAccess)
 			}
+			// by default, define the switched identifier "v" to have type of "x"
 			AccessExpr(e.Assign, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.CommClause:
@@ -339,6 +341,21 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				AccessExpr(b, ReadAccess)
 			}
 		case *ast.CaseClause:
+			// check if this is part of a TypeSwitchStmt, then define the identifier
+			// again (v := x.(type))
+			if parentSwitch, ok := b.parent.parent.node.(*ast.TypeSwitchStmt); ok {
+				b.Print("TypeSwitch case statement")
+				switch assign := parentSwitch.Assign.(type) {
+				case *ast.AssignStmt:
+					// does this case statement have exactly one type?
+					if len(e.List) == 1 {
+						// redefine switch variable
+						Define(assign.Lhs[0].(*ast.Ident).Name, TypeOfDecl(e.List[0], Resolver))
+					} else {
+						b.Print("Switch doesn't have an assignment", assign)
+					}
+				}
+			}
 			for _, c := range e.List {
 				AccessExpr(c, ReadAccess)
 			}
@@ -489,6 +506,8 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.X, t)
 		case *ast.DeferStmt:
 			AccessExpr(e.Call, ReadAccess)
+		case *ast.TypeAssertExpr:
+			AccessExpr(e.X, ReadAccess)
 		default:
 			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", e, e)
 		}
