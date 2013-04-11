@@ -122,7 +122,6 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	if !ok {
 		// function literal handled already by access pass
 		b.Print("Ignoring callsite", call)
-		b.Print(placeholderIdent.Name)
 		return nil
 	}
 	b.Printf("%T %+v %s", fun.Definition(), fun.Definition(), fun.name)

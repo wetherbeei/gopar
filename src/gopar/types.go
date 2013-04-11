@@ -57,10 +57,17 @@ func init() {
 		return args[0]
 	}).SetParameterAccess(false)
 
+	BuiltinTypes["copy"] = newCustomFuncType(func(args []Type) Type {
+		return BuiltinTypes["int"]
+	}).SetParameterAccess(false, true)
+
 	BuiltinTypes["close"] = newCustomFuncType(func(args []Type) Type {
 		return nil
 	}).SetParameterAccess(false)
-	BuiltinTypes["delete"] = BuiltinTypes["close"]
+
+	BuiltinTypes["delete"] = newCustomFuncType(func(args []Type) Type {
+		return nil
+	}).SetParameterAccess(false, true)
 
 	BuiltinTypes["complex"] = newCustomFuncType(func(args []Type) Type {
 		width := args[0].Definition().(*ast.Ident).Name[len("float"):]
@@ -469,6 +476,10 @@ func (typ *IndexedType) String() string {
 			buffer.WriteString("<-")
 		}
 		buffer.WriteString("chan ")
+	default:
+		buffer.WriteString("custom[")
+		buffer.WriteString(typ.IndexKey().String())
+		buffer.WriteString("]")
 	}
 	buffer.WriteString(typ.value.String())
 	buffer.WriteString(typ.MethodSet())
