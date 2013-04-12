@@ -27,7 +27,7 @@ func init() {
 		"rune", "byte", "bool", "nil",
 	}
 	for _, ident := range builtin {
-		BuiltinTypes[ident] = TypeDecl(&ast.Ident{Name: ident})
+		BuiltinTypes[ident] = typeDecl(&ast.Ident{Name: ident})
 	}
 
 	BuiltinTypes["true"] = BuiltinTypes["bool"]
@@ -128,8 +128,16 @@ func newBaseType(node ast.Node) *BaseType {
 	return &BaseType{Node: node, methods: make(map[string]*FuncType)}
 }
 
+func newShadowType(typ Type) *BaseType {
+	t := newBaseType(nil)
+	t.underlying = typ
+	return t
+}
+
 func (t *BaseType) Complete(resolver Resolver) {
-	t.underlying = TypeOfDecl(t.Node, resolver)
+	if t.underlying == nil {
+		t.underlying = TypeOfDecl(t.Node, resolver)
+	}
 	return
 }
 
@@ -740,14 +748,17 @@ type FutureType struct {
 	*BaseType
 }
 
-func newFutureType(node ast.Node) *FutureType {
+func newFutureType() *FutureType {
 	return &FutureType{
-		BaseType: newBaseType(node),
+		BaseType: newBaseType(nil),
 	}
 }
 
-func (t *FutureType) Complete(resolver Resolver) {
-	t.BaseType.underlying = TypeOfDecl(t.Node, resolver)
+func (t *FutureType) Finish(base Type) {
+	if base == nil {
+		panic("BaseType = nil")
+	}
+	t.BaseType.underlying = base
 }
 
 type PackageType struct {
@@ -817,26 +828,12 @@ func BinaryOp(X Type, op token.Token, Y Type) Type {
 }
 
 // Create a new type from a declaration Node
-func TypeDecl(expr ast.Node) Type {
+func typeDecl(expr ast.Node) Type {
 	switch n := expr.(type) {
-	case *ast.ChanType, *ast.ArrayType, *ast.MapType:
-		return newIndexedType(n)
-	case *ast.StructType, *ast.InterfaceType:
-		return newStructType(n)
-	case *ast.StarExpr:
-		return newPointerType(n)
-	case *ast.FuncDecl:
-		return newFuncType(n.Type, n)
-	case *ast.FuncType:
-		return newFuncType(n, nil)
-	case *ast.FuncLit:
-		return newFuncLit(n)
 	case *ast.Ident:
 		return newBaseType(n)
-	case *ast.ImportSpec:
-		return newPackageType(n)
 	}
-	fmt.Printf("ERROR: Unhandled TypeDecl %T %+v", expr, expr)
+	panic(fmt.Sprintf("ERROR: Unhandled typeDecl %T %+v", expr, expr))
 	return nil
 }
 
@@ -912,16 +909,23 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 			}
 			return retTyp
 		}
-	case *ast.FuncType:
-		// for arguments/local variables that are functions
-		funcTyp := TypeDecl(t)
+	case *ast.StructType, *ast.InterfaceType:
+		structTyp := newStructType(t)
+		structTyp.Complete(resolver)
+		return structTyp
+	case *ast.FuncDecl:
+		funcTyp := newFuncType(t.Type, t)
 		funcTyp.Complete(resolver)
 		return funcTyp
-	case *ast.InterfaceType:
-		// for arguments/local variables that are interfaces
-		ifaceTyp := TypeDecl(t)
-		ifaceTyp.Complete(resolver)
-		return ifaceTyp
+	case *ast.FuncLit:
+		funcTyp := newFuncLit(t)
+		funcTyp.Complete(resolver)
+		return funcTyp
+	case *ast.FuncType:
+		// for arguments/local variables that are functions
+		funcTyp := newFuncType(t, nil)
+		funcTyp.Complete(resolver)
+		return funcTyp
 	case *ast.Ident:
 		return resolver(t.Name)
 	case *ast.BasicLit:
@@ -950,7 +954,7 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		return TypeOf(t.X, resolver)
 	case *ast.StarExpr:
 		if definition {
-			ptrTyp := TypeDecl(t)
+			ptrTyp := newPointerType(t)
 			ptrTyp.Complete(resolver)
 			return ptrTyp
 		}

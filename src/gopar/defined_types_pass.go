@@ -22,6 +22,13 @@ func NewDefinedTypesData() *DefinedTypesData {
 	return d
 }
 
+// storage for future declarations
+type futureDecl struct {
+	names  []string
+	exprs  []ast.Node
+	isDecl bool // should we use TypeOfDecl or TypeOf?
+}
+
 type DefinedTypesPass struct {
 	BasePass
 }
@@ -46,10 +53,13 @@ func (pass *DefinedTypesPass) GetDependencies() []PassType {
 
 func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	data := NewDefinedTypesData()
+	pass.SetResult(p, data)
+
 	var methods []*ast.FuncDecl
-	var defined map[string]Type = make(map[string]Type)
+	var future = make(map[string]*futureDecl)
+	// make everything a FutureType to be resolved later
 	Define := func(name string, t Type) {
-		if val, exists := defined[name]; exists {
+		if val, exists := data.defined[name]; exists {
 			// if they're packages with the same name, ignore it
 			pkg1, ok1 := val.(*PackageType)
 			pkg2, ok2 := val.(*PackageType)
@@ -58,42 +68,127 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 				return
 			}
 		}
-		defined[name] = t // TODO: write directly to data.defined?
+		delete(future, name)
+		data.defined[name] = t
 	}
-	// Top-level definitions don't have to be done in any order, so use the 
-	// FutureType
+
+	Future := func(fd *futureDecl) {
+		for _, name := range fd.names {
+			future[name] = fd
+		}
+	}
+
+	//resolver := MakeResolver(nil, p, pass.compiler)
+	// make a custom resolver that will recursively fill in types
+	var resolver Resolver
+	resolver = func(name string) Type {
+		// check the current package
+		// if match doesn't have a type yet, resolve it and save it
+		fmt.Println("Resolving", name)
+		if futureDecl, ok := future[name]; ok {
+			if len(futureDecl.exprs) < len(futureDecl.names) {
+				// multi-assign
+				if len(futureDecl.exprs) != 1 {
+					panic(fmt.Sprintf("invalid multi-assign: %d to %d", len(futureDecl.exprs), len(futureDecl.names)))
+				}
+				result := TypeOf(futureDecl.exprs[0], resolver).(*MultiType).Expand()
+				for i, name := range futureDecl.names {
+					Define(name, result[i])
+				}
+			} else {
+				// normal assign
+				for i, name := range futureDecl.names {
+					var result Type
+					if futureDecl.isDecl {
+						result = TypeOfDecl(futureDecl.exprs[i], resolver)
+					} else {
+						result = TypeOf(futureDecl.exprs[i], resolver)
+					}
+					Define(name, result)
+				}
+			}
+		}
+
+		// return the type
+		if typ, ok := data.defined[name]; ok {
+			return typ
+		}
+
+		// check embedded "." packages
+		for _, embedded := range data.embedded {
+			if identTyp := embedded.Field(name); identTyp != nil {
+				return identTyp
+			}
+		}
+
+		// check builtin types
+		if identTyp, ok := BuiltinTypes[name]; ok {
+			return identTyp
+		}
+		return nil
+	}
+
+	// Top-level definitions don't have to be done in any order.
+	//
+	// Make one pass to initialize all identifiers to empty types
 	for _, decl := range file.Decls {
+		fmt.Println(decl)
 		switch t := decl.(type) {
 		case *ast.FuncDecl:
 			if t.Recv != nil {
 				methods = append(methods, t)
 			} else {
-				Define(t.Name.Name, TypeDecl(t))
+				Future(&futureDecl{
+					names:  []string{t.Name.Name},
+					exprs:  []ast.Node{t},
+					isDecl: true,
+				})
 			}
 		case *ast.GenDecl:
-			var prev ast.Expr // used for constants
+			var prevType ast.Expr // used for constants
+			var prevValues []ast.Expr
 			for _, spec := range t.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
-					var name = s.Name.Name
-					Define(name, TypeDecl(s.Type))
+					Future(&futureDecl{
+						names:  []string{s.Name.Name},
+						exprs:  []ast.Node{s.Type},
+						isDecl: true,
+					})
 				case *ast.ValueSpec:
-
-					if s.Type != nil {
-						for _, name := range s.Names {
-							Define(name.Name, newFutureType(s.Type))
-						}
-					} else {
-						// constants
-						// might be iota declarations, so if s.Values is missing then use
-						// the previous declaration
-						for i, name := range s.Names {
-							if i < len(s.Values) {
-								prev = s.Values[i]
-							}
-							Define(name.Name, newFutureType(prev))
-						}
+					// a single line of a declaration block
+					// const (
+					//   a, b int = 1, 2 (s.Type = int, s.Names = [a,b], s.Values = [1,2])
+					//   c, d = iota, iota*2 (s.Type = nil, s.Names = [c,d], s.Values = [iota,iota*2])
+					//   e, f (s.Type = nil, s.Names = [e,f], s.Values = [])
+					// )
+					// var a, b = pkgB.Fun()
+					// every ValueSpec set the prevValues and prevType values if they exist
+					if s.Type != nil || len(s.Values) > 0 {
+						prevType = s.Type
+						// if new values are defined they may be untyped constants (type = nil)
+						prevValues = s.Values
 					}
+					var names []string
+					var exprs []ast.Node
+					for i, name := range s.Names {
+						var expr ast.Node
+						if prevType != nil {
+							expr = prevType
+						} else {
+							// TODO: support any Expr (function calls with multiple returns, index expr, etc)
+							// change Complete() to do TypeOf() for Values.
+							// Define ValueSpecs like AssignStmts
+							expr = prevValues[i]
+						}
+						names = append(names, name.Name)
+						exprs = append(exprs, expr)
+					}
+					Future(&futureDecl{
+						names:  names,
+						exprs:  exprs,
+						isDecl: prevType != nil,
+					})
 				case *ast.ImportSpec:
 					// TODO: package imports should only be for this file
 					// http://golang.org/ref/spec#Declarations_and_scope
@@ -135,7 +230,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 								return nil
 							}
 						}
-						pkgType := TypeDecl(s)
+						pkgType := newPackageType(s)
 						pkgType.Complete(packageResolver)
 						if name == "." {
 							data.embedded = append(data.embedded, pkgType)
@@ -150,18 +245,13 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 		}
 	}
 
-	pass.SetResult(p, data)
-
-	resolver := MakeResolver(nil, p, pass.compiler)
-	// add all of the defines to the package scope so they can be found from
-	// .Complete()
-	for name, typ := range defined {
-		data.defined[name] = typ
+	var undefined []string = make([]string, len(future))
+	for name := range future {
+		undefined = append(undefined, name)
 	}
 
-	// fill in embedded fields
-	for _, typ := range defined {
-		typ.Complete(resolver)
+	for _, name := range undefined {
+		fmt.Printf("%s = %s\n", name, resolver(name))
 	}
 
 	// fill in methods
