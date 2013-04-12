@@ -132,6 +132,7 @@ func newBaseType(node ast.Node) *BaseType {
 func newShadowType(typ Type) *BaseType {
 	t := newBaseType(nil)
 	t.underlying = typ
+	t.complete = true
 	return t
 }
 
@@ -179,6 +180,7 @@ func (t *BaseType) AddMethod(name string, f *FuncType) {
 }
 
 func (t *BaseType) Method(name string) *FuncType {
+	fmt.Println("Looking for method", name)
 	if method, ok := t.methods[name]; ok {
 		fmt.Println(name, "=", method)
 		return method
@@ -186,7 +188,7 @@ func (t *BaseType) Method(name string) *FuncType {
 	if t.underlying != nil {
 		return t.underlying.Method(name)
 	}
-	fmt.Println("METHOD NOT FOUND", name, t.methods)
+	fmt.Println("Didn't find method", name)
 	return nil
 }
 
@@ -322,7 +324,7 @@ type StructType struct {
 	*BaseType
 	fieldOrder []string
 	fields     map[string]Type
-	embedded   []Type // could be *StructType or *PointerType
+	embedded   []Type // could be *StructType or *PointerType (or *BaseType shadow)
 	iface      bool
 }
 
@@ -373,7 +375,7 @@ func (t *StructType) Complete(resolver Resolver) {
 				}
 			case *ast.Ident:
 				// embedded
-				t.embedded = append(t.embedded, resolver(m.Name).(*StructType))
+				t.embedded = append(t.embedded, resolver(m.Name))
 			}
 		}
 	}
@@ -565,6 +567,9 @@ func (t *PointerType) Complete(resolver Resolver) {
 	}
 	expr := t.Node.(*ast.StarExpr).X
 	t.inner = TypeOfDecl(expr, resolver)
+	if t.inner == nil {
+		panic(fmt.Sprintf("Couldn't resolve pointer value %+v", expr))
+	}
 	return
 }
 
@@ -1008,6 +1013,10 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 			return ptrTyp
 		}
 		ptrType := TypeOf(t.X, resolver)
+		if ptrType == nil {
+			// (**cast) will cause this to segfault if we're exploring call vs cast
+			return nil
+		}
 		fmt.Println("Dereferencing", ptrType.String())
 		return ptrType.Dereference()
 	case *ast.CompositeLit:

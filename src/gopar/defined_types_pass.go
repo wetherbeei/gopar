@@ -24,9 +24,10 @@ func NewDefinedTypesData() *DefinedTypesData {
 
 // storage for future declarations
 type futureDecl struct {
-	names  []string
-	exprs  []ast.Node
-	isDecl bool // should we use TypeOfDecl or TypeOf?
+	names      []string
+	exprs      []ast.Node
+	isDecl     bool // should we use TypeOfDecl or TypeOf?
+	makeShadow bool // should the declaration shadow the TypeOfDecl(exprs)?
 }
 
 type DefinedTypesPass struct {
@@ -118,11 +119,22 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 					} else {
 						result = TypeOf(futureDecl.exprs[i], resolver)
 					}
-					Define(name, result)
+					var shadowType Type
+					if futureDecl.makeShadow {
+						shadowType = newShadowType(result)
+					}
+					if shadowType != nil {
+						Define(name, shadowType)
+					} else {
+						Define(name, result)
+					}
 					// only complete after we've defined it so recursive definitions can
 					// be picked up
 					if futureDecl.isDecl {
 						result.Complete(resolver)
+						if shadowType != nil {
+							shadowType.Complete(resolver)
+						}
 					}
 				}
 			}
@@ -167,10 +179,13 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 			for _, spec := range t.Specs {
 				switch s := spec.(type) {
 				case *ast.TypeSpec:
+					// new types should shadow(TypeOfDecl(s.Type)), not be a direct link
+					// to them
 					Future(&futureDecl{
-						names:  []string{s.Name.Name},
-						exprs:  []ast.Node{s.Type},
-						isDecl: true,
+						names:      []string{s.Name.Name},
+						exprs:      []ast.Node{s.Type},
+						isDecl:     true,
+						makeShadow: true,
 					})
 				case *ast.ValueSpec:
 					// a single line of a declaration block
