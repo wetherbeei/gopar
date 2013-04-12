@@ -20,16 +20,16 @@ type AccessPassPropogateVisitor struct {
 
 func (v AccessPassPropogateVisitor) Done(block *BasicBlock) (modified bool, err error) {
 	dataBlock := v.dataBlock
-
-	block.Print("== Defines ==")
-	for ident, expr := range dataBlock.defines {
-		block.Printf("%s = %T %+v", ident, expr, expr)
+	if *verbose {
+		block.Print("== Defines ==")
+		for ident, expr := range dataBlock.defines {
+			block.Printf("%s = %T %+v", ident, expr, expr)
+		}
+		block.Print("== Accesses ==")
+		for _, access := range dataBlock.accesses {
+			block.Printf(access.String())
+		}
 	}
-	block.Print("== Accesses ==")
-	for _, access := range dataBlock.accesses {
-		block.Printf(access.String())
-	}
-
 	MergeDependenciesUpwards(block)
 	return
 }
@@ -75,14 +75,18 @@ func MergeDependenciesUpwards(child *BasicBlock) {
 				if _, ok := dataBlock.defines[ident.index]; ok && ident.isIndexed {
 					ig.group = make([]Identifier, idx+1)
 					copy(ig.group, access.group)
-					parent.Printf("Leaving index scope [%s]", ig.group[idx].index)
+					if *verbose {
+						parent.Printf("Leaving index scope [%s]", ig.group[idx].index)
+					}
 					ig.group[idx].isIndexed = false
 					ig.group[idx].index = ""
 				}
 				break
 			}
 			parentDataBlock.accesses = append(parentDataBlock.accesses, ig)
-			parent.Print("<< Merged upwards", ig.String())
+			if *verbose {
+				parent.Print("<< Merged upwards", ig.String())
+			}
 		}
 	}
 	return

@@ -187,7 +187,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			typ = t
 		}
 		dataBlock.defines[ident] = typ
-		b.Printf("Defined %s = %v", ident, typ)
+		if *verbose {
+			b.Printf("Defined %s = %v", ident, typ)
+		}
 	}
 
 	// Access recording:
@@ -202,7 +204,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			return
 		}
 		dataBlock.accesses = append(dataBlock.accesses, *ident)
-		b.Printf("Accessed: %+v", ident)
+		if *verbose {
+			b.Printf("Accessed: %+v", ident)
+		}
 	}
 
 	// Support:
@@ -229,7 +233,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			pass.ParseBasicBlock(node, p)
 			return // don't desend into the block
 		}
-		b.Printf("start %T %+v", node, node)
+		if *verbose {
+			b.Printf("start %T %+v", node, node)
+		}
 		// recursively fill in accesses for an expression
 		switch e := node.(type) {
 		// These three expression types form the basis of a memory access.
@@ -246,7 +252,6 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		case *ast.ParenExpr:
 			AccessExpr(e.X, ReadAccess)
 		case *ast.BinaryExpr:
-			b.Printf("BinaryExpr %T %+v , %T %+v", e.X, e.X, e.Y, e.Y)
 			AccessExpr(e.X, ReadAccess)
 			AccessExpr(e.Y, ReadAccess)
 		case *ast.BasicLit:
@@ -269,12 +274,11 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			if e.Body != nil {
 				AccessExpr(e.Body, ReadAccess)
 			}
-		case *ast.FuncLit: // we don't support closures, but gather access info
+		case *ast.FuncLit: // gather accesses like the call happens here
 			AccessExpr(e.Type, ReadAccess)
 			AccessExpr(e.Body, ReadAccess)
 		case *ast.FuncType:
 			// defines arguments, named return types
-			b.Printf("Func: %+v -> %+v", e.Params, e.Results)
 			var defines []*ast.Field
 			if e.Params != nil {
 				defines = append(defines, e.Params.List...)
@@ -289,7 +293,6 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				}
 			}
 		case *ast.ForStmt:
-			b.Printf("For %+v; %+v; %+v", e.Init, e.Cond, e.Post)
 			AccessExpr(e.Init, ReadAccess)
 			AccessExpr(e.Cond, ReadAccess)
 
@@ -345,15 +348,12 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			// check if this is part of a TypeSwitchStmt, then define the identifier
 			// again (v := x.(type))
 			if parentSwitch, ok := b.parent.parent.node.(*ast.TypeSwitchStmt); ok {
-				b.Print("TypeSwitch case statement")
 				switch assign := parentSwitch.Assign.(type) {
 				case *ast.AssignStmt:
 					// does this case statement have exactly one type?
 					if len(e.List) == 1 {
 						// redefine switch variable
 						Define(assign.Lhs[0].(*ast.Ident).Name, TypeOfDecl(e.List[0], Resolver))
-					} else {
-						b.Print("Switch doesn't have an assignment", assign)
 					}
 				}
 			}
@@ -432,7 +432,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				AccessExpr(expr, ReadAccess)
 			}
 			for _, expr := range e.Lhs {
-				b.Printf("write %T %+v", expr, expr)
+				if *verbose {
+					b.Printf("write %T %+v", expr, expr)
+				}
 				AccessExpr(expr, WriteAccess)
 			}
 		case *ast.SendStmt:
@@ -442,7 +444,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			for _, expr := range e.Args {
 				AccessExpr(expr, ReadAccess)
 			}
-			fmt.Printf("%T %+v\n", e.Fun, e.Fun)
+			if *verbose {
+				fmt.Printf("%T %+v\n", e.Fun, e.Fun)
+			}
 			fnTyp, ok := TypeOf(e.Fun, Resolver).(*FuncType)
 			// Fill in additional reads/writes once we resolve all functions.
 			// Insert a placeholder access that will be removed later
@@ -453,6 +457,12 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 					AccessExpr(placeholderIdent, ReadAccess)
 					pass.SetResult(e, placeholderIdent)
 					b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, fnTyp.String())
+					// if this is a function literal, keep decending down to gather
+					// the accesses made
+					if lit, ok := e.Fun.(*ast.FuncLit); ok {
+						b.Print("Decending down a FuncLit")
+						AccessExpr(lit, ReadAccess)
+					}
 				} else {
 					// we can't see inside the function, assume all of the pointer args are
 					// written to
@@ -519,13 +529,15 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	}
 	AccessExpr(blockNode, ReadAccess)
 
-	b.Print("== Defines ==")
-	for ident, typ := range dataBlock.defines {
-		b.Printf("%s = %v", ident, typ)
-	}
-	b.Print("== Accesses ==")
-	for _, access := range dataBlock.accesses {
-		b.Printf(access.String())
+	if *verbose {
+		b.Print("== Defines ==")
+		for ident, typ := range dataBlock.defines {
+			b.Printf("%s = %v", ident, typ)
+		}
+		b.Print("== Accesses ==")
+		for _, access := range dataBlock.accesses {
+			b.Printf(access.String())
+		}
 	}
 	return
 }

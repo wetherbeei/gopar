@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+var verbose = flag.Bool("verbose", false, "Print verbose compiler output")
+
 func main() {
 	flag.Parse()
 	compilecmd := flag.Arg(0) // run|build|install

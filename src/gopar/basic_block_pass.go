@@ -87,7 +87,9 @@ func (v BasicBlockPassVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	}
 	if isBasicBlockNode(node) {
 		newBlock := NewBasicBlock(node, block)
-		newBlock.Printf("+ new block: %T %+v", node, node)
+		if *verbose {
+			newBlock.Printf("+ new block: %T %+v", node, node)
+		}
 		v.cur = newBlock
 		v.pass.SetResult(node, newBlock)
 	}

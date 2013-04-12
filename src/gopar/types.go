@@ -30,6 +30,11 @@ func init() {
 		BuiltinTypes[ident] = newFinalBaseType(&ast.Ident{Name: ident})
 	}
 
+	ifaceTyp := newStructType(&ast.InterfaceType{
+		Methods: &ast.FieldList{},
+	})
+	ifaceTyp.Complete(nil)
+
 	BuiltinTypes["true"] = BuiltinTypes["bool"]
 	BuiltinTypes["false"] = BuiltinTypes["bool"]
 	BuiltinTypes["iota"] = BuiltinTypes["int"]
@@ -81,10 +86,10 @@ func init() {
 
 	BuiltinTypes["panic"] = newCustomFuncType(func(args []Type) Type {
 		return nil
-	}).SetParameterAccess(true)
+	}).SetParameterAccess(false) // the interface value passed could be changed
 
 	BuiltinTypes["recover"] = newCustomFuncType(func(args []Type) Type {
-		return nil // TODO: this should return interface{}
+		return ifaceTyp
 	}).SetParameterAccess(true)
 
 	BuiltinTypes["print"] = newCustomFuncType(func(args []Type) Type {
@@ -898,27 +903,39 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 }
 
 func TypeOf(expr ast.Node, resolver Resolver) Type {
-	fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
+	if *verbose {
+		fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
+	}
 	t := typeOf(expr, resolver, false, true)
-	fmt.Printf("==> %s\n", t)
+	if *verbose {
+		fmt.Printf("==> %s\n", t)
+	}
 	return t
 }
 
 // Used to find the types of arguments or definitions, they vary by how they
 // handle *pointers
 func TypeOfDecl(expr ast.Node, resolver Resolver) Type {
-	fmt.Printf("TypeOfDecl (%T %+v)\n", expr, expr)
+	if *verbose {
+		fmt.Printf("TypeOfDecl (%T %+v)\n", expr, expr)
+	}
 	t := typeOf(expr, resolver, true, true)
-	fmt.Printf("==> %s\n", t)
+	if *verbose {
+		fmt.Printf("==> %s\n", t)
+	}
 	return t
 }
 
 // Create the new Type for this declaration, but don't Complete() it to avoid
 // recursive loops.
 func TypeDecl(expr ast.Node, resolver Resolver) Type {
-	fmt.Printf("TypeDecl (%T %+v)\n", expr, expr)
+	if *verbose {
+		fmt.Printf("TypeDecl (%T %+v)\n", expr, expr)
+	}
 	t := typeOf(expr, resolver, true, false)
-	fmt.Printf("==> %T\n", t)
+	if *verbose {
+		fmt.Printf("==> %T\n", t)
+	}
 	return t
 }
 
@@ -929,7 +946,6 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 		// is this a type conversion or a function call?
 		switch callType.(type) {
 		case *FuncType:
-			fmt.Println("CALLING")
 			// gather arguments to pass to Call()
 			var args []Type
 			for _, argExpr := range t.Args {
@@ -937,7 +953,6 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 			}
 			return callType.Call(args)
 		default:
-			fmt.Println("TYPE CONV")
 			// int32(X)
 			// deal with (*int32) parentheses manually
 			var retTyp Type
@@ -984,7 +999,6 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 		return constTyp
 	case *ast.IndexExpr:
 		indexer := TypeOf(t.X, resolver)
-		fmt.Println(indexer)
 		return indexer.IndexValue()
 	case *ast.UnaryExpr:
 		// &something
@@ -1017,7 +1031,6 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 			// (**cast) will cause this to segfault if we're exploring call vs cast
 			return nil
 		}
-		fmt.Println("Dereferencing", ptrType.String())
 		return ptrType.Dereference()
 	case *ast.CompositeLit:
 		// Something{}
@@ -1025,9 +1038,7 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 	case *ast.BinaryExpr:
 		xTyp := TypeOf(t.X, resolver)
 		yTyp := TypeOf(t.Y, resolver)
-		fmt.Println(xTyp, t.X, t.Op, yTyp, t.Y)
 		result := xTyp.Math(yTyp, t.Op)
-		fmt.Println("=>", result)
 		return result
 	case *ast.ArrayType, *ast.ChanType, *ast.MapType:
 		indexTyp := newIndexedType(t)
@@ -1037,7 +1048,6 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 		return indexTyp
 	case *ast.SelectorExpr:
 		innerTyp := TypeOf(t.X, resolver)
-		fmt.Printf("%T %+v\n", innerTyp, innerTyp)
 		if fieldTyp := innerTyp.Field(t.Sel.Name); fieldTyp != nil {
 			return fieldTyp
 		}

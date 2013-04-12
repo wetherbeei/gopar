@@ -159,8 +159,10 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 					if i == len(access.group)-1 {
 						// at the end, everything matches up to here
 						dependencyData.deps[idx].depType = ClassifyAccess(dep.depType, access.t)
-						block.Printf("Sub-access %s < %s", dep.String(), access.String())
-						block.Printf("  => %s", dependencyData.deps[idx].String())
+						if *verbose {
+							block.Printf("Sub-access %s < %s", dep.String(), access.String())
+							block.Printf("  => %s", dependencyData.deps[idx].String())
+						}
 					}
 				}
 			} else {
@@ -172,8 +174,10 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 					if i == len(dep.group)-1 {
 						// at the end, everything matches up to here
 						dependencyData.deps[idx].depType = ClassifyAccess(dep.depType, access.t)
-						block.Printf("Super-access %s >= %s", dep.String(), access.String())
-						block.Printf("  => %s", dependencyData.deps[idx].String())
+						if *verbose {
+							block.Printf("Super-access %s >= %s", dep.String(), access.String())
+							block.Printf("  => %s", dependencyData.deps[idx].String())
+						}
 					}
 				}
 			}
@@ -201,13 +205,17 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 				depType: ClassifyAccess(Unknown, access.t),
 			}
 			dependencyData.deps = append(dependencyData.deps, dep)
-			block.Printf("Added dep %s", dep.String())
+			if *verbose {
+				block.Printf("Added dep %s", dep.String())
+			}
 		}
 	}
 
-	block.Print("== Dependencies ==")
-	for i := range dependencyData.deps {
-		block.Print(dependencyData.deps[i].String())
+	if *verbose {
+		block.Print("== Dependencies ==")
+		for i := range dependencyData.deps {
+			block.Print(dependencyData.deps[i].String())
+		}
 	}
 
 	return DefaultBasicBlockVisitor{}

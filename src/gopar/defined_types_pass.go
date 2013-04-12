@@ -99,7 +99,6 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 		if name == "" {
 			panic(1)
 		}
-		fmt.Println("Resolving", name)
 		if futureDecl, ok := future[name]; ok {
 			if len(futureDecl.exprs) < len(futureDecl.names) {
 				// multi-assign
@@ -161,7 +160,6 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 
 	// Top-level definitions don't have to be done in any order
 	for _, decl := range file.Decls {
-		fmt.Println(decl)
 		switch t := decl.(type) {
 		case *ast.FuncDecl:
 			if t.Recv != nil {
@@ -248,7 +246,9 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 						if ok {
 							packageResolver = func(name string) Type {
 								pkgTyp := otherPackageTypes.defined[name]
-								fmt.Printf("Cross-package lookup: %s.%s = %s\n", path, name, pkgTyp)
+								if *verbose {
+									fmt.Printf("Cross-package lookup: %s.%s = %s\n", path, name, pkgTyp)
+								}
 								return pkgTyp
 							}
 						} else {
@@ -295,12 +295,15 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 
 		methodTyp := newMethodType(method.Type, method, recvTyp)
 		methodTyp.Complete(resolver)
-		fmt.Printf("Adding method %+v to %+v\n", method, methodTyp)
+		if *verbose {
+			fmt.Printf("Adding method %+v to %+v\n", method, methodTyp)
+		}
 		recvTyp.AddMethod(method.Name.Name, methodTyp)
 	}
-
-	for name, typ := range data.defined {
-		fmt.Printf("%s = %v\n", name, typ)
+	if *verbose {
+		for name, typ := range data.defined {
+			fmt.Printf("%s = %v\n", name, typ)
+		}
 	}
 	return
 }

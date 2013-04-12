@@ -64,11 +64,15 @@ func (v *CallGraphPassVisitor) Visit(node ast.Node) (w BasicBlockVisitor) {
 		case *ast.CallExpr:
 			if fnTyp := TypeOf(t.Fun, v.resolver); fnTyp != nil {
 				if funcTyp, ok := fnTyp.(*FuncType); ok {
-					fmt.Println("Found function call to", funcTyp.String())
+					if *verbose {
+						fmt.Println("Found function call to", funcTyp.String())
+					}
 					v.pass.funcGraph = append(v.pass.funcGraph, funcTyp)
 				} else {
 					// a type conversion int(x)
-					fmt.Println("Unknown call", fnTyp.String())
+					if *verbose {
+						fmt.Println("Unknown call", fnTyp.String())
+					}
 				}
 			}
 		}
@@ -105,9 +109,13 @@ func (pass *CallGraphPass) RunFunctionPass(fun *ast.FuncDecl, p *Package) (modif
 	} else {
 		fnTyp = resolver(name).(*FuncType)
 	}
-	block.Print("Call graph", fnTyp.String())
+	if *verbose {
+		block.Print("Call graph", fnTyp.String())
+	}
 	callGraph.graph[fnTyp] = &FunctionCallGraph{pkg: p.name, calls: pass.funcGraph}
-	fmt.Println(fun.Name.Name, pass.funcGraph)
+	if *verbose {
+		fmt.Println(fun.Name.Name, pass.funcGraph)
+	}
 	pass.funcGraph = nil
 	return
 }
