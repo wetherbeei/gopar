@@ -27,7 +27,7 @@ func init() {
 		"rune", "byte", "bool", "nil",
 	}
 	for _, ident := range builtin {
-		BuiltinTypes[ident] = typeDecl(&ast.Ident{Name: ident})
+		BuiltinTypes[ident] = newFinalBaseType(&ast.Ident{Name: ident})
 	}
 
 	BuiltinTypes["true"] = BuiltinTypes["bool"]
@@ -122,6 +122,7 @@ type BaseType struct {
 	ast.Node                        // definition node
 	methods    map[string]*FuncType // every type can have a method set
 	underlying Type                 // if this type is a direct shadow of an existing type
+	complete   bool                 // ensure each type is only completed once
 }
 
 func newBaseType(node ast.Node) *BaseType {
@@ -134,10 +135,19 @@ func newShadowType(typ Type) *BaseType {
 	return t
 }
 
-func (t *BaseType) Complete(resolver Resolver) {
-	if t.underlying == nil {
-		t.underlying = TypeOfDecl(t.Node, resolver)
+func (t *BaseType) completed() bool {
+	if !t.complete {
+		t.complete = true
+		return false
 	}
+	return true
+}
+
+func (t *BaseType) Complete(resolver Resolver) {
+	if t.completed() {
+		return
+	}
+	t.underlying = TypeOfDecl(t.Node, resolver)
 	return
 }
 
@@ -259,6 +269,23 @@ func (t *BaseType) MethodSet() string {
 	return buffer.String()
 }
 
+type FinalBaseType struct {
+	*BaseType
+}
+
+func newFinalBaseType(node ast.Node) *FinalBaseType {
+	t := &FinalBaseType{
+		BaseType: newBaseType(node),
+	}
+	t.completed()
+	return t
+}
+
+func (t *FinalBaseType) Complete(resolver Resolver) {
+	// do nothing
+	return
+}
+
 type ConstType struct {
 	*BaseType
 	value string
@@ -271,6 +298,9 @@ func newConstType(node ast.Node) *ConstType {
 }
 
 func (t *ConstType) Complete(resolver Resolver) {
+	if t.completed() {
+		return
+	}
 	switch t.Node.(*ast.BasicLit).Kind {
 	case token.FLOAT:
 		t.BaseType.underlying = resolver("float64")
@@ -306,6 +336,9 @@ func newStructType(node ast.Node) *StructType {
 
 // fill in all struct fields, but not those carried from embedded structs
 func (t *StructType) Complete(resolver Resolver) {
+	if t.completed() {
+		return
+	}
 	switch e := t.Node.(type) {
 	case *ast.StructType:
 		for _, field := range e.Fields.List {
@@ -435,6 +468,9 @@ func newCustomIndexedType(value Type, key Type, byValue bool) *IndexedType {
 
 // fill in key and value sections
 func (typ *IndexedType) Complete(resolver Resolver) {
+	if typ.completed() {
+		return
+	}
 	switch t := typ.Node.(type) {
 	case *ast.ArrayType:
 		if t.Len != nil {
@@ -524,6 +560,9 @@ func (t *PointerType) PassByValue() bool {
 
 // Resolve the inner type
 func (t *PointerType) Complete(resolver Resolver) {
+	if t.completed() {
+		return
+	}
 	expr := t.Node.(*ast.StarExpr).X
 	t.inner = TypeOfDecl(expr, resolver)
 	return
@@ -609,11 +648,11 @@ func newCustomFuncType(f func([]Type) Type) *FuncType {
 
 // fill in params and results
 func (t *FuncType) Complete(resolver Resolver) {
+	if t.completed() {
+		return
+	}
 	expr := t.typ
 	if expr.Params != nil {
-		if t.params != nil {
-			panic("Already Completed")
-		}
 		for _, arg := range expr.Params.List {
 			argType := TypeOfDecl(arg.Type, resolver)
 			// no name args
@@ -630,9 +669,6 @@ func (t *FuncType) Complete(resolver Resolver) {
 		}
 	}
 	if expr.Results != nil {
-		if t.results != nil {
-			panic("Already Completed")
-		}
 		for _, result := range expr.Results.List {
 			resultType := TypeOfDecl(result.Type, resolver)
 			i := len(result.Names)
@@ -774,11 +810,11 @@ func newPackageType(node ast.Node) Type {
 }
 
 func (t *PackageType) Complete(resolver Resolver) {
-	// TODO: fix the double-complete in defined types pass
-	if t.resolver == nil {
-		t.resolver = resolver
-		t.path = t.Node.(*ast.ImportSpec).Path.Value
+	if t.completed() {
+		return
 	}
+	t.resolver = resolver
+	t.path = t.Node.(*ast.ImportSpec).Path.Value
 }
 
 func (t *PackageType) Field(name string) Type {
@@ -827,16 +863,6 @@ func BinaryOp(X Type, op token.Token, Y Type) Type {
 	return nil
 }
 
-// Create a new type from a declaration Node
-func typeDecl(expr ast.Node) Type {
-	switch n := expr.(type) {
-	case *ast.Ident:
-		return newBaseType(n)
-	}
-	panic(fmt.Sprintf("ERROR: Unhandled typeDecl %T %+v", expr, expr))
-	return nil
-}
-
 // Takes an identifier, returns the node that defines it. This should search all
 // scopes up to the package level.
 type Resolver func(ident string) Type
@@ -868,7 +894,7 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 
 func TypeOf(expr ast.Node, resolver Resolver) Type {
 	fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
-	t := typeOf(expr, resolver, false)
+	t := typeOf(expr, resolver, false, true)
 	fmt.Printf("==> %s\n", t)
 	return t
 }
@@ -877,12 +903,21 @@ func TypeOf(expr ast.Node, resolver Resolver) Type {
 // handle *pointers
 func TypeOfDecl(expr ast.Node, resolver Resolver) Type {
 	fmt.Printf("TypeOfDecl (%T %+v)\n", expr, expr)
-	t := typeOf(expr, resolver, true)
+	t := typeOf(expr, resolver, true, true)
 	fmt.Printf("==> %s\n", t)
 	return t
 }
 
-func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
+// Create the new Type for this declaration, but don't Complete() it to avoid
+// recursive loops.
+func TypeDecl(expr ast.Node, resolver Resolver) Type {
+	fmt.Printf("TypeDecl (%T %+v)\n", expr, expr)
+	t := typeOf(expr, resolver, true, false)
+	fmt.Printf("==> %T\n", t)
+	return t
+}
+
+func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Type {
 	switch t := expr.(type) {
 	case *ast.CallExpr:
 		callType := TypeOf(t.Fun, resolver)
@@ -911,26 +946,36 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		}
 	case *ast.StructType, *ast.InterfaceType:
 		structTyp := newStructType(t)
-		structTyp.Complete(resolver)
+		if complete {
+			structTyp.Complete(resolver)
+		}
 		return structTyp
 	case *ast.FuncDecl:
 		funcTyp := newFuncType(t.Type, t)
-		funcTyp.Complete(resolver)
+		if complete {
+			funcTyp.Complete(resolver)
+		}
 		return funcTyp
 	case *ast.FuncLit:
 		funcTyp := newFuncLit(t)
-		funcTyp.Complete(resolver)
+		if complete {
+			funcTyp.Complete(resolver)
+		}
 		return funcTyp
 	case *ast.FuncType:
 		// for arguments/local variables that are functions
 		funcTyp := newFuncType(t, nil)
-		funcTyp.Complete(resolver)
+		if complete {
+			funcTyp.Complete(resolver)
+		}
 		return funcTyp
 	case *ast.Ident:
 		return resolver(t.Name)
 	case *ast.BasicLit:
 		constTyp := newConstType(t)
-		constTyp.Complete(resolver)
+		if complete {
+			constTyp.Complete(resolver)
+		}
 		return constTyp
 	case *ast.IndexExpr:
 		indexer := TypeOf(t.X, resolver)
@@ -941,7 +986,9 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		switch t.Op {
 		case token.AND:
 			refTyp := newPointerType(&ast.StarExpr{X: t.X})
-			refTyp.Complete(resolver)
+			if complete {
+				refTyp.Complete(resolver)
+			}
 			return refTyp
 		// <-chan
 		case token.ARROW:
@@ -955,7 +1002,9 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 	case *ast.StarExpr:
 		if definition {
 			ptrTyp := newPointerType(t)
-			ptrTyp.Complete(resolver)
+			if complete {
+				ptrTyp.Complete(resolver)
+			}
 			return ptrTyp
 		}
 		ptrType := TypeOf(t.X, resolver)
@@ -973,7 +1022,9 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool) Type {
 		return result
 	case *ast.ArrayType, *ast.ChanType, *ast.MapType:
 		indexTyp := newIndexedType(t)
-		indexTyp.Complete(resolver)
+		if complete {
+			indexTyp.Complete(resolver)
+		}
 		return indexTyp
 	case *ast.SelectorExpr:
 		innerTyp := TypeOf(t.X, resolver)

@@ -74,16 +74,30 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 
 	Future := func(fd *futureDecl) {
 		for _, name := range fd.names {
+			if name == "" {
+				panic(fmt.Sprintf("Empty name in %+v", fd))
+			}
 			future[name] = fd
 		}
 	}
 
 	//resolver := MakeResolver(nil, p, pass.compiler)
-	// make a custom resolver that will recursively fill in types
+	// Make a custom resolver that will recursively fill in types. There are two
+	// recursive definition problem spots:
+	// type A struct {
+	//   next *A
+	// }
+	// type F func(F)
+	// Solve these by adding an additional TypeOf parameter to not complete the
+	// newly created type automatically. Only complete the type after it has been
+	// added to the definitions table.
 	var resolver Resolver
 	resolver = func(name string) Type {
 		// check the current package
 		// if match doesn't have a type yet, resolve it and save it
+		if name == "" {
+			panic(1)
+		}
 		fmt.Println("Resolving", name)
 		if futureDecl, ok := future[name]; ok {
 			if len(futureDecl.exprs) < len(futureDecl.names) {
@@ -100,11 +114,16 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 				for i, name := range futureDecl.names {
 					var result Type
 					if futureDecl.isDecl {
-						result = TypeOfDecl(futureDecl.exprs[i], resolver)
+						result = TypeDecl(futureDecl.exprs[i], resolver)
 					} else {
 						result = TypeOf(futureDecl.exprs[i], resolver)
 					}
 					Define(name, result)
+					// only complete after we've defined it so recursive definitions can
+					// be picked up
+					if futureDecl.isDecl {
+						result.Complete(resolver)
+					}
 				}
 			}
 		}
@@ -128,9 +147,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 		return nil
 	}
 
-	// Top-level definitions don't have to be done in any order.
-	//
-	// Make one pass to initialize all identifiers to empty types
+	// Top-level definitions don't have to be done in any order
 	for _, decl := range file.Decls {
 		fmt.Println(decl)
 		switch t := decl.(type) {
@@ -171,18 +188,16 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 					}
 					var names []string
 					var exprs []ast.Node
-					for i, name := range s.Names {
-						var expr ast.Node
+					for _, name := range s.Names {
 						if prevType != nil {
-							expr = prevType
-						} else {
-							// TODO: support any Expr (function calls with multiple returns, index expr, etc)
-							// change Complete() to do TypeOf() for Values.
-							// Define ValueSpecs like AssignStmts
-							expr = prevValues[i]
+							exprs = append(exprs, prevType)
 						}
 						names = append(names, name.Name)
-						exprs = append(exprs, expr)
+					}
+					if prevType == nil {
+						for _, e := range prevValues {
+							exprs = append(exprs, e)
+						}
 					}
 					Future(&futureDecl{
 						names:  names,
@@ -235,6 +250,7 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 						if name == "." {
 							data.embedded = append(data.embedded, pkgType)
 						} else {
+							// define packages right away
 							Define(name, pkgType)
 						}
 					}
@@ -245,13 +261,17 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 		}
 	}
 
-	var undefined []string = make([]string, len(future))
+	var undefined []string
 	for name := range future {
 		undefined = append(undefined, name)
 	}
-
+	fmt.Println(undefined, future)
 	for _, name := range undefined {
-		fmt.Printf("%s = %s\n", name, resolver(name))
+		typ := resolver(name)
+		if typ == nil {
+			panic(fmt.Sprintf("Could not resolve defined type %s", name))
+		}
+		fmt.Printf("%s = %s\n", name, typ)
 	}
 
 	// fill in methods
