@@ -194,9 +194,6 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 					// )
 					// var a, b = pkgB.Fun()
 					// every ValueSpec set the prevValues and prevType values if they exist
-
-					// special case if the type is a FuncLit, change it to a FuncType
-					// because the definition could be changed later
 					if s.Type != nil || len(s.Values) > 0 {
 						prevType = s.Type
 						// if new values are defined they may be untyped constants (type = nil)

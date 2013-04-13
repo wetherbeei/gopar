@@ -229,6 +229,9 @@ func (b BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
 		if b.err != nil {
 			return nil
 		}
+		if _, bad := node.(*ast.FuncLit); bad {
+			return nil // don't go down lits
+		}
 		b.passVisitor = b.passVisitor.Visit(node)
 		return b
 	}

@@ -616,10 +616,12 @@ type FuncType struct {
 	typ                   *ast.FuncType
 	customCall            func([]Type) Type // a custom function for builtin magic (make, new, unsafe.*, etc)
 	noWriteMask           []bool            // an optional mask for functions without bodies, true means the arg wasn't written to
+	notSafe               bool              // is this function not safe to parallelize?
 }
 
 // decl [optional], but used as the defining node in a BasicBlock, so it must
-// be returned from BaseType.Definition()
+// be returned from BaseType.Definition(). If decl is nil, the function will be
+// marked as not safe
 func newFuncType(typ *ast.FuncType, decl *ast.FuncDecl) *FuncType {
 	t := &FuncType{
 		BaseType: newBaseType(decl),
@@ -628,17 +630,9 @@ func newFuncType(typ *ast.FuncType, decl *ast.FuncDecl) *FuncType {
 	if decl != nil {
 		t.name = decl.Name.Name
 		t.body = decl.Body
+	} else {
+		t.notSafe = true
 	}
-	return t
-}
-
-func newFuncLit(decl *ast.FuncLit) *FuncType {
-	t := &FuncType{
-		BaseType: newBaseType(decl),
-		typ:      decl.Type,
-	}
-	t.name = "<FuncLit>"
-	t.body = decl.Body
 	return t
 }
 
@@ -654,6 +648,7 @@ func newCustomFuncType(f func([]Type) Type) *FuncType {
 	t := newFuncType(nil, nil)
 	t.customCall = f
 	t.complete = true
+	t.notSafe = false // custom functions are safe
 	return t
 }
 
@@ -975,7 +970,8 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 		}
 		return funcTyp
 	case *ast.FuncLit:
-		funcTyp := newFuncLit(t)
+		// safety: we can't go into these, there be dragons here
+		funcTyp := newFuncType(t.Type, nil)
 		if complete {
 			funcTyp.Complete(resolver)
 		}

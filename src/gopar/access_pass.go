@@ -276,7 +276,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			}
 		case *ast.FuncLit: // gather accesses like the call happens here
 			AccessExpr(e.Type, ReadAccess)
-			AccessExpr(e.Body, ReadAccess)
+			// don't go into the Body
 		case *ast.FuncType:
 			// defines arguments, named return types
 			var defines []*ast.Field
@@ -459,12 +459,7 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 					if *verbose {
 						b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, fnTyp.String())
 					}
-					// if this is a function literal, keep decending down to gather
-					// the accesses made
-					if lit, ok := e.Fun.(*ast.FuncLit); ok {
-						b.Print("Decending down a FuncLit")
-						AccessExpr(lit, ReadAccess)
-					}
+					// a FuncLit could be parallelized here
 				} else {
 					// we can't see inside the function, assume all of the pointer args are
 					// written to
@@ -476,8 +471,21 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 							AccessExpr(arg, WriteAccess)
 						}
 					}
+					// safety note: notSafe is set for FuncType and FuncLit, because they
+					// could be user-defined functions. In general, we trust library code
+					// to be goroutine-safe (...maybe not for os.* and others...)
+					if fnTyp.notSafe {
+						pos := p.Location(e.Fun.Pos())
+						RecordAccess(&IdentifierGroup{
+							group: []Identifier{
+								Identifier{id: "$func"},
+								Identifier{id: fmt.Sprintf("%s:%d", pos.Filename, pos.Line)},
+							},
+						}, WriteAccess)
+						b.Print("Function not safe", fnTyp.String())
+					}
 
-					// TODO/safety bug: what if an argument is a function?
+					// safety bug: what if an argument is a function?
 					// If we know the exact function foo(math.Mul), then propogate th
 					// accesses. If the function is just a pointer and we can't see the
 					// function definition, assume it modifies some external state.

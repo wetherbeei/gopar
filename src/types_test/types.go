@@ -21,6 +21,14 @@ func main() {
 	}
 
 	Func() // must assume all functions that we cannot see directly inside cannot be parallelized
+	func() {
+		// do stuff
+		return
+	}()
+	var f = func() {
+		// other stuff
+	}
+	f()
 }
 
 type Struct1 struct {
