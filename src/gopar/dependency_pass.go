@@ -136,8 +136,10 @@ func (pass *DependencyPass) RunBasicBlockPass(block *BasicBlock, p *Package) Bas
 	dataBlock := block.Get(AccessPassType).(*AccessPassData)
 	dependencyData := NewDependencyPassData()
 	block.Set(DependencyPassType, dependencyData)
-	for _, access := range dataBlock.accesses {
-		block.Printf(access.String())
+	if *verbose {
+		for _, access := range dataBlock.accesses {
+			block.Printf(access.String())
+		}
 	}
 	for _, access := range dataBlock.accesses {
 		// propogate the access to potentially multiple dependency entries for

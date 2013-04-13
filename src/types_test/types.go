@@ -2,53 +2,25 @@
 package main
 
 func main() {
-	{
-		a := 1
-		b := 0.2
-		c := "hello"
-		d := true
-		e := false
-		f := []int64{1, 2, 3}
-		i := Struct1{}
-		j := &Struct1{}
+	var x = &Struct1{}
+	// s.a.WriteAccess -> x.a.WriteAccess
+	x.Method1()
+	var y = &Struct2{}
+	// s.a.WriteAccess -> y.b.a.WriteAccess
+	y.b.Method1()
+
+	var z = &Struct1{}
+	ModifyStruct1(z)
+
+	var w = Struct1{}
+	DontModifyStruct1(w)
+	panic(z)
+
+	var Func = func() {
+		// write to a global variable
 	}
-	{
-		var a *int64
-		var b [4]int64
-		var c *Struct1
-	}
-	{
-		a := make([]int64, 10)
-		b := make(map[int64]string)
-		c := Func1()
-	}
-	{
-		a, b := 1, 2
-		c, d := a, b
-		d, e, f := Func2()
-		g, h, i := Func3(true, 1)
-	}
-	{
-		a := make(chan int)
-		b := <-a
-	}
-	{
-		a := Struct3{}
-		b := a.Struct2
-		c := a.b // TODO: doesn't work, need to promote .b as a field on Struct3
-		d := a.Struct2.b.a
-	}
-	{
-		// This isn't valid go, but it helps to test type conversions
-		ptr := new(uint)
-		a := (*int32)(ptr)
-		b := *(*int32)(ptr)
-		c := (*int32)((*uint32)(ptr))
-		d := *c
-		e := int32(1)
-		f := ptr.(*int)
-		g, ok := f.(*int32)
-	}
+
+	Func() // must assume all functions that we cannot see directly inside cannot be parallelized
 }
 
 type Struct1 struct {
@@ -57,12 +29,23 @@ type Struct1 struct {
 	c, d, e float32
 }
 
+func ModifyStruct1(s *Struct1) {
+	s.a = 2
+	return
+}
+
+func DontModifyStruct1(s Struct1) {
+	s.a = 2
+	return
+}
+
 func (s *Struct1) Method1() {
+	s.a = 1
 	return
 }
 
 func (s Struct1) Method2() {
-
+	return
 }
 
 type Struct2 struct {

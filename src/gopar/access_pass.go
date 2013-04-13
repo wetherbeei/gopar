@@ -456,7 +456,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 					placeholderIdent := &ast.Ident{Name: placeholder}
 					AccessExpr(placeholderIdent, ReadAccess)
 					pass.SetResult(e, placeholderIdent)
-					b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, fnTyp.String())
+					if *verbose {
+						b.Printf("\x1b[33m>> %s\x1b[0m use in later pass: %s", placeholder, fnTyp.String())
+					}
 					// if this is a function literal, keep decending down to gather
 					// the accesses made
 					if lit, ok := e.Fun.(*ast.FuncLit); ok {

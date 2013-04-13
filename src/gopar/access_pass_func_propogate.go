@@ -30,6 +30,9 @@ import (
 
 type AccessPassFuncPropogate struct {
 	BasePass
+	// keep track of the current function to avoid propogating recursive functions
+	// into themselves
+	funcDecl *FuncType
 }
 
 func StripDefinedIndex(access IdentifierGroup, data *AccessPassData) (ig IdentifierGroup) {
@@ -60,7 +63,7 @@ func StripDefinedIndex(access IdentifierGroup, data *AccessPassData) (ig Identif
 }
 
 type AccessPassFuncPropogateVisitor struct {
-	pass      Pass
+	pass      *AccessPassFuncPropogate
 	p         *Package
 	cur       *BasicBlock
 	dataBlock *AccessPassData
@@ -103,10 +106,10 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	// only use this resolver at the CallExpr site
 	resolver := MakeResolver(b, v.p, v.pass.GetCompiler())
 	var fun *FuncType
+	var funcBasicBlock *BasicBlock
 	var call *ast.CallExpr
 	switch t := node.(type) {
 	case *ast.CallExpr:
-
 		if fnTyp := TypeOf(t.Fun, resolver); fnTyp != nil {
 			if funcTyp, ok := fnTyp.(*FuncType); ok {
 				if funcTyp.body == nil {
@@ -115,7 +118,17 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					return v
 				}
 				fun = funcTyp
+				fmt.Println(fun.String())
+				fmt.Printf("%+v\n", fun.body)
+				pos := v.p.Location(fun.body.Pos())
+				fmt.Printf("%s:%d\n", pos.Filename, pos.Line)
 				call = t
+				funcBasicBlock = pass.GetCompiler().GetPassResult(BasicBlockPassType, fun.Definition()).(*BasicBlock)
+				if fun == pass.funcDecl {
+					// don't propogate direct recursive calls, indirect recursive calls
+					// are already handled using the call graph
+					return v
+				}
 			} else {
 				// not a call, it's a type cast
 				return v
@@ -142,23 +155,38 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 		b.Printf("%T %+v %s", fun.Definition(), fun.Definition(), fun.name)
 	}
 	funcType := fun.typ
-	funcDataBlock := pass.GetCompiler().GetPassResult(BasicBlockPassType, fun.Definition()).(*BasicBlock).Get(AccessPassType).(*AccessPassData)
+	funcDataBlock := funcBasicBlock.Get(AccessPassType).(*AccessPassData)
 
 	// Now fill in the accesses this call would have made, and propogate it
 	// all the way to the top
 	var funcAccesses []IdentifierGroup // only the accesses this function made
 
-	// Fill in global accesses
+	// Fill in global accesses. If they aren't valid in this package, replace
+	// them with a generic funcDecl.__global.Read/WriteAccess to cut down on the
+	// access spam
+	var funcRead, funcWrite bool
 	for _, access := range funcDataBlock.accesses {
 		if _, ok := funcDataBlock.defines[access.group[0].id]; !ok {
-			// if there is an array access that uses an identifier block defined in 
-			// this block, change the access from b[idx] to b
-			ig := StripDefinedIndex(access, funcDataBlock)
-			if *verbose {
-				b.Print("Global access", ig.String())
+			switch access.t {
+			case ReadAccess:
+				funcRead = true
+			case WriteAccess:
+				funcWrite = true
 			}
-			funcAccesses = append(funcAccesses, ig)
 		}
+	}
+
+	if funcRead {
+		funcAccesses = append(funcAccesses, IdentifierGroup{
+			t:     ReadAccess,
+			group: []Identifier{Identifier{id: fun.name}, Identifier{id: "$external"}},
+		})
+	}
+	if funcWrite {
+		funcAccesses = append(funcAccesses, IdentifierGroup{
+			t:     WriteAccess,
+			group: []Identifier{Identifier{id: fun.name}, Identifier{id: "$external"}},
+		})
 	}
 
 	// copy matching accesses from arg/argName to callArg
@@ -175,23 +203,25 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 
 		// Find all accesses to these variables
 		for _, access := range funcDataBlock.accesses {
+			original := access
 			// Replace the function arg name with the callIdent prefix
-			// the last part of 
 			if access.group[0].id == argName.Name {
 				// check if an index variable is also a function argument and
-				// remove it
-				ig := StripDefinedIndex(access, funcDataBlock)
+				// remove it, make a copy anyways
+				access.group = make([]Identifier, len(original.group))
+				copy(access.group, original.group)
+				access = StripDefinedIndex(access, funcDataBlock)
 
-				newAccess := make([]Identifier, len(ig.group))
-				copy(newAccess, ig.group)
 				// if the callsite is &a and the access is *a, make the access
 				// a for this function
 				var callIdentCopy []Identifier
-				if callIdent.group[len(callIdent.group)-1].refType == AddressOf && newAccess[len(newAccess)-1].refType == Dereference {
-					if *verbose {
-						b.Print("Removing pointer alias & -> *")
-					}
-					newAccess[len(newAccess)-1].refType = NoReference
+				//b.Print(callIdent, &access)
+				if callIdent.group[len(callIdent.group)-1].refType == AddressOf && access.group[len(access.group)-1].refType == Dereference {
+					// TODO: this doesn't work unless the *write side uses a dereference
+					// too...add in automatic derefs if the type is a pointer
+					b.Print("Removing pointer alias & -> *")
+
+					access.group[len(access.group)-1].refType = NoReference
 					callIdentCopy = make([]Identifier, len(callIdent.group))
 					copy(callIdentCopy, callIdent.group)
 					callIdentCopy[len(callIdentCopy)-1].refType = NoReference
@@ -199,16 +229,11 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					callIdentCopy = callIdent.group
 				}
 				// replace access[0] with callIdent
-				if *verbose {
-					b.Print(callIdentCopy)
-					b.Print(newAccess[1:])
-				}
-				ig.group = append(ig.group, callIdentCopy...)
-				ig.group = append(ig.group, newAccess[1:]...)
-				if *verbose {
-					b.Printf("%s -> %s", access.String(), ig.String())
-				}
-				funcAccesses = append(funcAccesses, ig)
+				//b.Print(callIdentCopy, "+", access.group[1:])
+				callIdentCopy = append(callIdentCopy, access.group[1:]...)
+				access.group = callIdentCopy
+				//b.Printf("%s -> %s", original.String(), access.String())
+				funcAccesses = append(funcAccesses, access)
 			}
 		}
 	}
@@ -277,6 +302,8 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 		// Remove the placeholder, insert the newly generated accesses at the
 		// position of the function call. Careful not to append to the funcAccesses
 		// variable.
+		pos := v.p.Location(child.node.Pos())
+		child.Printf("Propogating up %d entries to %s:%d", len(funcAccesses), pos.Filename, pos.Line)
 		dataBlock.accesses = append(append(dataBlock.accesses[0:placeholderIdx], funcAccesses...), dataBlock.accesses[placeholderIdx:]...)
 
 		// Get ready for the next propogation; remove accesses that the function
@@ -324,7 +351,12 @@ func (pass *AccessPassFuncPropogate) GetDependencies() []PassType {
 
 func (pass *AccessPassFuncPropogate) RunBasicBlockPass(block *BasicBlock, p *Package) BasicBlockVisitor {
 	dataBlock := block.Get(AccessPassType).(*AccessPassData)
-	return AccessPassFuncPropogateVisitor{pass: pass, cur: block, dataBlock: dataBlock, p: p}
+	return AccessPassFuncPropogateVisitor{
+		pass:      pass,
+		cur:       block,
+		dataBlock: dataBlock,
+		p:         p,
+	}
 }
 
 func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
@@ -372,10 +404,14 @@ func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (
 		if fnDecl.body == nil {
 			continue
 		}
-		block := pass.compiler.GetPassResult(BasicBlockPassType, fnDecl.body).(*BasicBlock)
+		block := pass.compiler.GetPassResult(BasicBlockPassType, fnDecl.Definition()).(*BasicBlock)
 
 		// Manually run the basic block pass in inverse call graph order
+
 		var mod bool
+		pos := p.Location(fnDecl.Pos())
+		fmt.Printf("\x1b[32;1mFunctionPass %s:%d\x1b[0m %s\n", pos.Filename, pos.Line, fnDecl.name)
+		pass.funcDecl = fnDecl
 		mod, err = RunBasicBlock(pass, block, p)
 		modified = modified || mod
 		if err != nil {

@@ -185,15 +185,12 @@ func (t *BaseType) AddMethod(name string, f *FuncType) {
 }
 
 func (t *BaseType) Method(name string) *FuncType {
-	fmt.Println("Looking for method", name)
 	if method, ok := t.methods[name]; ok {
-		fmt.Println(name, "=", method)
 		return method
 	}
 	if t.underlying != nil {
 		return t.underlying.Method(name)
 	}
-	fmt.Println("Didn't find method", name)
 	return nil
 }
 
@@ -369,7 +366,6 @@ func (t *StructType) Complete(resolver Resolver) {
 	case *ast.InterfaceType:
 		t.iface = true
 		for _, method := range e.Methods.List {
-			fmt.Printf("Interface method: %+v\n", method)
 			switch m := method.Type.(type) {
 			case *ast.FuncType:
 				methodTyp := newMethodType(m, nil, t)
@@ -637,7 +633,11 @@ func newFuncType(typ *ast.FuncType, decl *ast.FuncDecl) *FuncType {
 }
 
 func newFuncLit(decl *ast.FuncLit) *FuncType {
-	t := newFuncType(decl.Type, nil)
+	t := &FuncType{
+		BaseType: newBaseType(decl),
+		typ:      decl.Type,
+	}
+	t.name = "<FuncLit>"
 	t.body = decl.Body
 	return t
 }
@@ -653,6 +653,7 @@ func newMethodType(typ *ast.FuncType, decl *ast.FuncDecl, recv Type) *FuncType {
 func newCustomFuncType(f func([]Type) Type) *FuncType {
 	t := newFuncType(nil, nil)
 	t.customCall = f
+	t.complete = true
 	return t
 }
 
@@ -903,13 +904,10 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 }
 
 func TypeOf(expr ast.Node, resolver Resolver) Type {
-	if *verbose {
-		fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
-	}
+	fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
+
 	t := typeOf(expr, resolver, false, true)
-	if *verbose {
-		fmt.Printf("==> %s\n", t)
-	}
+	fmt.Printf("==> %s\n", t)
 	return t
 }
 
