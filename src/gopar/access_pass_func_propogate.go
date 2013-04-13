@@ -179,13 +179,13 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 	if funcRead {
 		funcAccesses = append(funcAccesses, IdentifierGroup{
 			t:     ReadAccess,
-			group: []Identifier{Identifier{id: fun.name}, Identifier{id: "$external"}},
+			group: []Identifier{Identifier{id: "$external"}, Identifier{id: fun.name}},
 		})
 	}
 	if funcWrite {
 		funcAccesses = append(funcAccesses, IdentifierGroup{
 			t:     WriteAccess,
-			group: []Identifier{Identifier{id: fun.name}, Identifier{id: "$external"}},
+			group: []Identifier{Identifier{id: "$external"}, Identifier{id: fun.name}},
 		})
 	}
 

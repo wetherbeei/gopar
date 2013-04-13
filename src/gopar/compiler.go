@@ -146,6 +146,10 @@ func (c *Compiler) AddPass(pass Pass) {
 	var t PassType = pass.GetPassType()
 	c.passes[t] = pass
 	c.passDependencies[t] = pass.GetDependencies()
+	// set it to false in the already-run passes
+	for _, status := range c.passStatus {
+		status[t] = false
+	}
 }
 
 func (c *Compiler) GetPassResult(t PassType, v interface{}) interface{} {

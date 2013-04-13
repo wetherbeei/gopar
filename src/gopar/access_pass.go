@@ -105,7 +105,7 @@ func NewAccessPassData() *AccessPassData {
 
 type AccessExprFn func(node ast.Node, t AccessType)
 
-func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
+func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) (err error) {
 	var ident Identifier
 	// deal with pointers and addresses first
 	switch t := expr.(type) {
@@ -140,7 +140,7 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 			ident.id = x.Sel.Name
 			AccessIdentBuild(group, x.X, fn)
 		default:
-			fmt.Printf("Unresolved array expression %T %+v", x, x)
+			err = fmt.Errorf("Unresolved array expression %T %+v", x, x)
 		}
 		if fn != nil {
 			fn(t.Index, ReadAccess)
@@ -151,7 +151,7 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 			ident.isIndexed = true
 		default:
 			// can't resolve array access, record for the entire array
-			fmt.Printf("Unresolved array access %T [%+v]\n", i, i)
+			err = fmt.Errorf("Unresolved array access %T [%+v]\n", i, i)
 		}
 	case *ast.CompositeLit:
 		// ignore, we're building a type expression, no accesses here
@@ -160,9 +160,10 @@ func AccessIdentBuild(group *IdentifierGroup, expr ast.Node, fn AccessExprFn) {
 			fn(t, ReadAccess)
 		}
 	default:
-		fmt.Printf("Unknown expression %T %+v\n", t, t)
+		err = fmt.Errorf("Unknown expression %T %+v\n", t, t)
 	}
 	group.group = append(group.group, ident)
+	return
 }
 
 func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {

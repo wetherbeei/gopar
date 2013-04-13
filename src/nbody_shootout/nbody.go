@@ -95,8 +95,12 @@ func (sys System) energy() float64 {
 }
 
 func (sys System) advance(dt float64) {
+	// TODO: make a copy of the system
+	// Can't be pointers...we need to still restrict the types used, or else it
+	// still isn't safe. 
 	for i, body := range sys {
 		for j := i + 1; j < len(sys); j++ {
+			// we should never access the loop list directly for reading
 			body2 := sys[j]
 			dx := body.x - body2.x
 			dy := body.y - body2.y

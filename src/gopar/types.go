@@ -899,10 +899,13 @@ func MakeResolver(block *BasicBlock, p *Package, c *Compiler) Resolver {
 }
 
 func TypeOf(expr ast.Node, resolver Resolver) Type {
-	fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
-
+	if *verbose {
+		fmt.Printf("TypeOf (%T %+v)\n", expr, expr)
+	}
 	t := typeOf(expr, resolver, false, true)
-	fmt.Printf("==> %s\n", t)
+	if *verbose {
+		fmt.Printf("==> %s\n", t)
+	}
 	return t
 }
 
