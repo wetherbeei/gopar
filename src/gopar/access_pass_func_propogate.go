@@ -288,7 +288,6 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 			b.Printf("Replacing placeholder at %d", placeholderIdx)
 		}
 
-		dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
 		// Insert the function accesses that survived the previous iteration
 		// (weren't removed due to scope), into the current scope's accesses. Don't
 		// make a copy, copies will be made if the variable changes.
@@ -302,9 +301,10 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 		// Remove the placeholder, insert the newly generated accesses at the
 		// position of the function call. Careful not to append to the funcAccesses
 		// variable.
+		//dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
 		pos := v.p.Location(child.node.Pos())
 		child.Printf("Propogating up %d entries to %s:%d", len(funcAccesses), pos.Filename, pos.Line)
-		dataBlock.accesses = append(append(dataBlock.accesses[0:placeholderIdx], funcAccesses...), dataBlock.accesses[placeholderIdx:]...)
+		dataBlock.accesses = append(append(dataBlock.accesses[0:placeholderIdx], funcAccesses...), dataBlock.accesses[placeholderIdx+1:]...)
 
 		// Get ready for the next propogation; remove accesses that the function
 		// made that leave scope

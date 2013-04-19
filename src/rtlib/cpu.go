@@ -12,13 +12,12 @@ import (
 	"sync"
 )
 
-func init() {
-	// TODO: remove this
-	runtime.GOMAXPROCS(runtime.NumCPU())
-}
-
 type ParallelFunc func(int)
 
+// CPUParallel launches GOMAXPROCS goroutines to distribute the indexes between
+// [start, stop) evenly.
+// TODO: account for some cores being "faster" than others, so use an atomic int
+// for each goroutine to get a new chunk of work when it's ready.
 func CPUParallel(f ParallelFunc, start, stop int) {
 	var wg sync.WaitGroup
 

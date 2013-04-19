@@ -28,8 +28,9 @@ type ParallelLoopInfo struct {
 	indexVar  string       // the unique index for iterating ex: idx in (for idx := range slice {})
 	arguments []Dependency // variables to be copied to/from the kernel
 	//privatize   []Dependency // variables to be privatized for each loop
-	start, stop ast.Expr   // an expression representing the number of iterations, inclusive start, exclusive stop
-	variables   []ast.Stmt // values to set for each loop iteration, including the index and value vars
+	start, stop ast.Expr     // an expression representing the number of iterations, inclusive start, exclusive stop
+	variables   []ast.Stmt   // values to set for each loop iteration, including the index and value vars
+	alias       []Dependency // values to be compared for aliasing
 	// these variables hold references to ast blocks for inserting new code
 	//
 	// { // .block
@@ -77,9 +78,10 @@ func (pass *ParallelizePass) GetDependencies() []PassType {
 }
 
 func allowedType(t Type) (err error) {
+	if !t.PassByValue() {
+		return fmt.Errorf("Unsupported type (pass-by-reference): %v", t)
+	}
 	switch s := t.(type) {
-	case *BaseType:
-		// TODO: string
 	case *StructType:
 		// check fields
 		for _, name := range s.Fields() {
@@ -88,10 +90,8 @@ func allowedType(t Type) (err error) {
 			}
 		}
 	case *IndexedType:
-		// check value
+		// only allow full arrays
 		return allowedType(s.IndexValue())
-	default:
-		return fmt.Errorf("Unsupported type on GPU: %v", t)
 	}
 	return nil
 }
@@ -100,6 +100,8 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 	var block *BasicBlock
 	var dependencyData *DependencyPassData
 	var listIg IdentifierGroup
+	var listTyp Type
+	var list ast.Expr
 
 	switch t := loop.node.(type) {
 	case *ast.RangeStmt:
@@ -112,7 +114,9 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 		block = loop
 		// examine the dependencies of the loop body
 		dependencyData = block.Get(DependencyPassType).(*DependencyPassData)
-		err = AccessIdentBuild(&listIg, t.X, nil)
+		list = t.X
+		err = AccessIdentBuild(&listIg, list, nil)
+		listTyp = TypeOf(list, resolver)
 		if err != nil {
 			return
 		}
@@ -131,7 +135,7 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 			// len(X)
 			stop: &ast.CallExpr{
 				Fun:  &ast.Ident{Name: "len"},
-				Args: []ast.Expr{t.X},
+				Args: []ast.Expr{list},
 			},
 			kernel: t.Body,
 		}
@@ -153,7 +157,7 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 			info.variables = append(info.variables, &ast.AssignStmt{
 				Lhs: []ast.Expr{t.Value},
 				Rhs: []ast.Expr{&ast.IndexExpr{
-					X:     t.X,
+					X:     list,
 					Index: &ast.Ident{Name: valueIdx},
 				}},
 				Tok: token.DEFINE,
@@ -166,8 +170,8 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 
 	// Fill in type d
 	// Check parallelization conditions
-	// - Check that array writes are only to [key]
-	// - Check that there are no reads from the list
+	// - Check that array reads/writes are only to [indexVar]
+	// - Check that there are no reads from the list outside of [indexVar]
 
 	blockDefines := block.Get(AccessPassType).(*AccessPassData).defines
 	for _, dep := range dependencyData.deps {
@@ -185,8 +189,11 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 						break
 					}
 					if i == len(listIg.group)-1 {
-						err = fmt.Errorf("Cannot read from loop data '%s'", dep.String())
-						return
+						if !dep.group[i].isIndexed || dep.group[i].index != info.indexVar {
+							err = fmt.Errorf("Cannot access loop data '%s' with index '%s'",
+								dep.String(), dep.group[i].index)
+							return
+						}
 					}
 				} else {
 					break
@@ -196,7 +203,6 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 	}
 
 	for _, dep := range dependencyData.deps {
-		//	for _, dep := range dependencyData.deps {
 		// ignore variables defined in the loop statement
 		if _, ok := blockDefines[dep.group[0].id]; ok {
 			continue
@@ -246,33 +252,87 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 					copy(newDep.group, dep.group)
 					newDep.group[idx].isIndexed = false
 					newDep.group[idx].index = ""
+					break
 				}
-				break
 			}
-			info.arguments = append(info.arguments, newDep)
+			// check if arguments already has this dep since we may be creating a new
+			// copy
+			var matched bool
+			for j, dep := range info.arguments {
+				if len(dep.group) != len(newDep.group) {
+					continue // not an exact match
+				}
+				for i := 0; i < len(dep.group); i++ {
+					if !dep.group[i].Equals(newDep.group[i]) {
+						break
+					}
+					// if exact match
+					if i == len(dep.group)-1 {
+						matched = true
+						// reclassify
+						if dep.depType == ReadOnly && (newDep.depType == ReadWrite || newDep.depType == WriteFirst) {
+							info.arguments[j].depType = ReadWrite
+						}
+					}
+				}
+			}
+			if !matched {
+				info.arguments = append(info.arguments, newDep)
+			}
 		}
 	}
 
 	// Check for a.b.c arguments (TODO remove this requirement)
-	for _, dep := range info.arguments {
-		if len(dep.group) > 1 {
-			err = fmt.Errorf("Selectors not allowed as arguments: %s", dep.String())
-			return
+	/*
+		for _, dep := range info.arguments {
+			if len(dep.group) > 1 {
+				err = fmt.Errorf("Selectors not allowed as arguments: %s", dep.String())
+				return
+			}
+			if dep.group[0].isIndexed {
+				err = fmt.Errorf("Index expressions not allowed as arguments: %s", dep.String())
+			}
 		}
-		if dep.group[0].isIndexed {
-			err = fmt.Errorf("Index expressions not allowed as arguments: %s", dep.String())
-		}
-	}
+	*/
 
 	// Check types of all arguments
 	for i, dep := range info.arguments {
+		block.Print(dep.String())
+		if dep.group[0].id == "$external" {
+			continue // can't resolve these
+			// TODO: what if they alias?
+		}
 		dep.goType = TypeOf(dep.MakeNode(), resolver)
-		// TODO: this is for GPUs
-		//if err = allowedType(dep.goType); err != nil {
-		//	return
-		//}
+		// see if this argument is also pass-by-reference (slice only), and add it
+		// to the aliased list
+		if !dep.goType.PassByValue() {
+			if _, ok := dep.goType.(*IndexedType); ok {
+				if err = allowedType(dep.goType.IndexValue()); err != nil {
+					err = fmt.Errorf("Dependency %s contains invalid value: %s", dep.String(), err.Error())
+					return
+				}
+				info.alias = append(info.alias, dep)
+				continue
+			}
+		}
+		if err = allowedType(dep.goType); err != nil {
+			err = fmt.Errorf("%s: %s", dep.String(), err.Error())
+			return
+		}
 		info.arguments[i] = dep
 	}
+
+	// Check array type
+	var listDep Dependency
+	listDep.group = listIg.group
+	listDep.depType = ReadWrite
+	listDep.goType = listTyp
+	if err = allowedType(listTyp.IndexValue()); err != nil {
+		err = fmt.Errorf("Loop %s contains invalid value: %s", listDep.String(), err.Error())
+		return
+	}
+
+	info.alias = append(info.alias, listDep)
 	return
 }
 
@@ -297,6 +357,10 @@ func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) Ba
 		block.Printf("Thread index = '%s'", info.indexVar)
 		block.Printf("Arguments:")
 		for _, arg := range info.arguments {
+			block.Printf("  %s", arg.String())
+		}
+		block.Printf("Alias checks:")
+		for _, arg := range info.alias {
 			block.Printf("  %s", arg.String())
 		}
 		data.loops[block.node] = info

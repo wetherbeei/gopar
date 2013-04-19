@@ -31,6 +31,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/token"
 	"io"
 	"strings"
 )
@@ -110,9 +111,9 @@ func generateOpenCL(data *ParallelLoopInfo, c *Compiler) (kernel string, err err
 	writer.Writelns(opencl_header)
 	writer.Writeln(fmt.Sprintf("__kernel void %s(__global", data.name))
 	writer.Indent()
-	for _, arg := range data.arguments {
-		writer.Writeln(fmt.Sprintf("%s %s,", arg.goType.CType(), arg.group[0].id))
-	}
+	//for _, arg := range data.arguments {
+	//writer.Writeln(fmt.Sprintf("%s %s,", arg.goType.CType(), arg.group[0].id))
+	//}
 	writer.Dedent()
 	writer.Writeln(") {")
 	generateBlock(data.block, writer)
@@ -126,6 +127,27 @@ func generateBlock(block ast.Node, writer *CWriter) {
 	writer.Dedent()
 }
 
+// __parallel |= rtlib.AliasCheck(a, b)
+func generateAliasTest(a Dependency, b Dependency) *ast.AssignStmt {
+	return &ast.AssignStmt{
+		Tok: token.ASSIGN,
+		Lhs: []ast.Expr{&ast.Ident{Name: "__parallel"}},
+		Rhs: []ast.Expr{
+			&ast.BinaryExpr{
+				Op: token.LAND,
+				X:  &ast.Ident{Name: "__parallel"},
+				Y: &ast.CallExpr{
+					Fun: &ast.SelectorExpr{
+						X:   &ast.Ident{Name: GOPAR_RTLIB},
+						Sel: &ast.Ident{Name: "AliasCheck"},
+					},
+					Args: []ast.Expr{a.MakeNode(), b.MakeNode()},
+				},
+			},
+		},
+	}
+}
+
 func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modified bool, err error) {
 	data := pass.compiler.GetPassResult(ParallelizePassType, p).(*ParallelizeData)
 
@@ -135,6 +157,15 @@ func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modifie
 		if err != nil {
 			return
 		}
+
+		// aliasing checks (check each against each other)
+		for i, a := range loop.alias {
+			for j := i + 1; j < len(loop.alias); j++ {
+				b := loop.alias[j]
+				loop.tests.List = append(loop.tests.List, generateAliasTest(a, b))
+			}
+		}
+
 		// if rtlib.HasGPU() {} else {}
 		hasGPU := &ast.IfStmt{
 			Cond: &ast.CallExpr{

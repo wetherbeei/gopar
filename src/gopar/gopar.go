@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var verbose = flag.Bool("verbose", false, "Print verbose compiler output")
+var verbose = flag.Bool("verbose", true, "Print verbose compiler output")
 
 func main() {
 	flag.Parse()
