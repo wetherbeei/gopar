@@ -40,9 +40,11 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 )
 
 var n = flag.Int("n", 1000, "number of iterations")
+var v = flag.Int("v", 600, "number of planets")
 
 type Body struct {
 	x, y, z, vx, vy, vz, mass float64
@@ -59,31 +61,32 @@ func (b *Body) offsetMomentum(px, py, pz float64) {
 	b.vz = -pz / solarMass
 }
 
-type System []*Body
+type System struct {
+	planets []Body
+	results []Body
+}
 
-func NewSystem(body []Body) System {
-	n := make(System, len(body))
-	for i := 0; i < len(body); i++ {
-		n[i] = new(Body) // copy to avoid overwriting the inputs
-		*n[i] = body[i]
-	}
+func NewSystem(planets []Body) *System {
 	var px, py, pz float64
-	for _, body := range n {
+	for _, body := range planets {
 		px += body.vx * body.mass
 		py += body.vy * body.mass
 		pz += body.vz * body.mass
 	}
-	n[0].offsetMomentum(px, py, pz)
-	return n
+	planets[0].offsetMomentum(px, py, pz)
+	return &System{
+		planets: planets,
+		results: make([]Body, len(planets)),
+	}
 }
 
-func (sys System) energy() float64 {
+func (sys *System) energy() float64 {
 	var e float64
-	for i, body := range sys {
+	for i, body := range sys.planets {
 		e += 0.5 * body.mass *
 			(body.vx*body.vx + body.vy*body.vy + body.vz*body.vz)
-		for j := i + 1; j < len(sys); j++ {
-			body2 := sys[j]
+		for j := i + 1; j < len(sys.planets); j++ {
+			body2 := sys.planets[j]
 			dx := body.x - body2.x
 			dy := body.y - body2.y
 			dz := body.z - body2.z
@@ -94,14 +97,14 @@ func (sys System) energy() float64 {
 	return e
 }
 
-func (sys System) advance(dt float64) {
-	// TODO: make a copy of the system
-	// Can't be pointers...we need to still restrict the types used, or else it
-	// still isn't safe. 
-	for i, body := range sys {
-		for j := i + 1; j < len(sys); j++ {
-			// we should never access the loop list directly for reading
-			body2 := sys[j]
+func (sys *System) advance(dt float64) {
+	for i := range sys.results {
+		body := sys.planets[i]
+		for j := 0; j < len(sys.planets); j++ {
+			if j == i {
+				continue // don't advance ourselves
+			}
+			body2 := sys.planets[j]
 			dx := body.x - body2.x
 			dy := body.y - body2.y
 			dz := body.z - body2.z
@@ -113,66 +116,36 @@ func (sys System) advance(dt float64) {
 			body.vx -= dx * body2.mass * mag
 			body.vy -= dy * body2.mass * mag
 			body.vz -= dz * body2.mass * mag
-
-			body2.vx += dx * body.mass * mag
-			body2.vy += dy * body.mass * mag
-			body2.vz += dz * body.mass * mag
 		}
+		sys.results[i] = body
 	}
 
-	for _, body := range sys {
+	for i, body := range sys.results {
 		body.x += dt * body.vx
 		body.y += dt * body.vy
 		body.z += dt * body.vz
+		sys.results[i] = body
 	}
+	// swap lists
+	sys.planets, sys.results = sys.results, sys.planets
 }
-
-var (
-	jupiter = Body{
-		x:    4.84143144246472090e+00,
-		y:    -1.16032004402742839e+00,
-		z:    -1.03622044471123109e-01,
-		vx:   1.66007664274403694e-03 * daysPerYear,
-		vy:   7.69901118419740425e-03 * daysPerYear,
-		vz:   -6.90460016972063023e-05 * daysPerYear,
-		mass: 9.54791938424326609e-04 * solarMass,
-	}
-	saturn = Body{
-		x:    8.34336671824457987e+00,
-		y:    4.12479856412430479e+00,
-		z:    -4.03523417114321381e-01,
-		vx:   -2.76742510726862411e-03 * daysPerYear,
-		vy:   4.99852801234917238e-03 * daysPerYear,
-		vz:   2.30417297573763929e-05 * daysPerYear,
-		mass: 2.85885980666130812e-04 * solarMass,
-	}
-	uranus = Body{
-		x:    1.28943695621391310e+01,
-		y:    -1.51111514016986312e+01,
-		z:    -2.23307578892655734e-01,
-		vx:   2.96460137564761618e-03 * daysPerYear,
-		vy:   2.37847173959480950e-03 * daysPerYear,
-		vz:   -2.96589568540237556e-05 * daysPerYear,
-		mass: 4.36624404335156298e-05 * solarMass,
-	}
-	neptune = Body{
-		x:    1.53796971148509165e+01,
-		y:    -2.59193146099879641e+01,
-		z:    1.79258772950371181e-01,
-		vx:   2.68067772490389322e-03 * daysPerYear,
-		vy:   1.62824170038242295e-03 * daysPerYear,
-		vz:   -9.51592254519715870e-05 * daysPerYear,
-		mass: 5.15138902046611451e-05 * solarMass,
-	}
-	sun = Body{
-		mass: solarMass,
-	}
-)
 
 func main() {
 	flag.Parse()
-
-	system := NewSystem([]Body{sun, jupiter, saturn, uranus, neptune})
+	var planets []Body
+	r := rand.New(rand.NewSource(1234))
+	for i := 0; i < *v; i++ {
+		planets = append(planets, Body{
+			x:    r.Float64(),
+			y:    r.Float64(),
+			z:    r.Float64(),
+			vx:   r.Float64(),
+			vy:   r.Float64(),
+			vz:   r.Float64(),
+			mass: r.Float64(),
+		})
+	}
+	system := NewSystem(planets)
 	fmt.Printf("%.9f\n", system.energy())
 	for i := 0; i < *n; i++ {
 		system.advance(0.01)
