@@ -486,12 +486,16 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 						b.Print("Function not safe", fnTyp.String())
 					}
 
-					// safety bug: what if an argument is a function?
+					// TODO safety bug: what if an argument is a function?
+					//
 					// If we know the exact function foo(math.Mul), then propogate th
 					// accesses. If the function is just a pointer and we can't see the
 					// function definition, assume it modifies some external state.
 					//
 					// Is this handled by setting function types to be pass-by-reference?
+					//
+					// NOTE safety: what if an argument is a struct that contains a
+					// pointer? That is forbidden for now in ParallelizePass.
 					for i, arg := range e.Args {
 						if !fnTyp.GetParameterAccess(i) {
 							argTyp := TypeOf(arg, Resolver)
