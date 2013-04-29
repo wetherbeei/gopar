@@ -118,10 +118,14 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					return v
 				}
 				fun = funcTyp
-				fmt.Println(fun.String())
-				fmt.Printf("%+v\n", fun.body)
+				if *verbose {
+					fmt.Println(fun.String())
+					fmt.Printf("%+v\n", fun.body)
+				}
 				pos := v.p.Location(fun.body.Pos())
-				fmt.Printf("%s:%d\n", pos.Filename, pos.Line)
+				if *verbose {
+					fmt.Printf("%s:%d\n", pos.Filename, pos.Line)
+				}
 				call = t
 				funcBasicBlock = pass.GetCompiler().GetPassResult(BasicBlockPassType, fun.Definition()).(*BasicBlock)
 				if fun == pass.funcDecl {
@@ -215,12 +219,12 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 				// if the callsite is &a and the access is *a, make the access
 				// a for this function
 				var callIdentCopy []Identifier
-				//b.Print(callIdent, &access)
 				if callIdent.group[len(callIdent.group)-1].refType == AddressOf && access.group[len(access.group)-1].refType == Dereference {
 					// TODO: this doesn't work unless the *write side uses a dereference
 					// too...add in automatic derefs if the type is a pointer
-					b.Print("Removing pointer alias & -> *")
-
+					if *verbose {
+						b.Print("Removing pointer alias & -> *")
+					}
 					access.group[len(access.group)-1].refType = NoReference
 					callIdentCopy = make([]Identifier, len(callIdent.group))
 					copy(callIdentCopy, callIdent.group)
@@ -229,10 +233,8 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 					callIdentCopy = callIdent.group
 				}
 				// replace access[0] with callIdent
-				//b.Print(callIdentCopy, "+", access.group[1:])
 				callIdentCopy = append(callIdentCopy, access.group[1:]...)
 				access.group = callIdentCopy
-				//b.Printf("%s -> %s", original.String(), access.String())
 				funcAccesses = append(funcAccesses, access)
 			}
 		}
@@ -303,7 +305,9 @@ func (v AccessPassFuncPropogateVisitor) Visit(node ast.Node) (w BasicBlockVisito
 		// variable.
 		//dataBlock.accesses = append(dataBlock.accesses[0:placeholderIdx], dataBlock.accesses[placeholderIdx+1:]...)
 		pos := v.p.Location(child.node.Pos())
-		child.Printf("Propogating up %d entries to %s:%d", len(funcAccesses), pos.Filename, pos.Line)
+		if *verbose {
+			child.Printf("Propogating up %d entries to %s:%d", len(funcAccesses), pos.Filename, pos.Line)
+		}
 		dataBlock.accesses = append(append(dataBlock.accesses[0:placeholderIdx], funcAccesses...), dataBlock.accesses[placeholderIdx+1:]...)
 
 		// Get ready for the next propogation; remove accesses that the function
@@ -410,7 +414,9 @@ func (pass *AccessPassFuncPropogate) RunModulePass(file *ast.File, p *Package) (
 
 		var mod bool
 		pos := p.Location(fnDecl.Pos())
-		fmt.Printf("\x1b[32;1mFunctionPass %s:%d\x1b[0m %s\n", pos.Filename, pos.Line, fnDecl.name)
+		if *verbose {
+			fmt.Printf("\x1b[32;1mFunctionPass %s:%d\x1b[0m %s\n", pos.Filename, pos.Line, fnDecl.name)
+		}
 		pass.funcDecl = fnDecl
 		mod, err = RunBasicBlock(pass, block, p)
 		modified = modified || mod

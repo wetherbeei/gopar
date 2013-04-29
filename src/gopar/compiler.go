@@ -12,7 +12,6 @@ package main
 import (
 	"fmt"
 	"go/ast"
-	"strings"
 )
 
 type PassMode uint
@@ -160,10 +159,14 @@ func (c *Compiler) ResetPass(t PassType) {
 	c.passes[t].Reset()
 }
 
+func (c *Compiler) Tick(status string) {
+	// draw the new status line
+	return
+}
+
 // Run all passes while dependencies are met
 func (c *Compiler) Run(pkg *Package) (err error) {
-	fmt.Printf("\x1b[33;1m%s\x1b[0m\n", strings.Repeat("=", 80))
-	fmt.Printf("\x1b[32;1mRunning package %s\x1b[0m\n", pkg.name)
+	fmt.Printf("\x1b[32;1mRunning package %s\x1b[0m, pass: ", pkg.name)
 	passStatus := c.passStatus[pkg]
 	if passStatus == nil {
 		passStatus = make(map[PassType]bool)
@@ -183,8 +186,7 @@ func (c *Compiler) Run(pkg *Package) (err error) {
 				canRun = canRun && passStatus[dep]
 			}
 			if canRun {
-				fmt.Println(strings.Repeat("-", 80))
-				fmt.Printf("\x1b[32;1mRunning %T\x1b[0m\n", c.passes[t])
+				fmt.Printf("%T ", c.passes[t])
 				var modified bool
 				modified, err = c.RunPass(c.passes[t], pkg)
 				if err != nil {
@@ -202,10 +204,13 @@ func (c *Compiler) Run(pkg *Package) (err error) {
 		}
 		var allDone bool = true
 		for t, done := range passStatus {
-			fmt.Printf("Status %T = %t\n", c.passes[t], done)
+			if *verbose {
+				fmt.Printf("Status %T = %t\n", c.passes[t], done)
+			}
 			allDone = allDone && done
 		}
 		if allDone {
+			fmt.Printf("done\n")
 			break // all passes completed successfully, exit
 		}
 	}
@@ -244,7 +249,9 @@ func (b BasicBlockVisitorImpl) Visit(node ast.Node) ast.Visitor {
 
 func RunBasicBlock(pass Pass, root *BasicBlock, p *Package) (modified bool, err error) {
 	pos := p.Location(root.node.Pos())
-	root.Printf("\x1b[32;1mBasicBlockPass %s:%d\x1b[0m %T %+v", pos.Filename, pos.Line, root.node, root.node)
+	if *verbose {
+		root.Printf("\x1b[32;1mBasicBlockPass %s:%d\x1b[0m %T %+v", pos.Filename, pos.Line, root.node, root.node)
+	}
 	passVisitor := pass.RunBasicBlockPass(root, p)
 	n := BasicBlockVisitorImpl{pass: pass, p: p, block: root, passVisitor: passVisitor}
 	ast.Walk(n, root.node)
@@ -262,13 +269,17 @@ func RunBasicBlock(pass Pass, root *BasicBlock, p *Package) (modified bool, err 
 func (c *Compiler) RunPass(pass Pass, pkg *Package) (modified bool, err error) {
 	switch pass.GetPassMode() {
 	case ModulePassMode:
-		fmt.Printf("\x1b[32;1mModulePass %s\x1b[0m\n", pkg.name)
+		if *verbose {
+			fmt.Printf("\x1b[32;1mModulePass %s\x1b[0m\n", pkg.name)
+		}
 		return pass.RunModulePass(pkg.file, pkg)
 	case FunctionPassMode:
 		for _, decl := range pkg.file.Decls {
 			if fnDecl, ok := decl.(*ast.FuncDecl); ok {
 				pos := pkg.Location(fnDecl.Pos())
-				fmt.Printf("\x1b[32;1mFunctionPass %s:%d\x1b[0m %s\n", pos.Filename, pos.Line, fnDecl.Name)
+				if *verbose {
+					fmt.Printf("\x1b[32;1mFunctionPass %s:%d\x1b[0m %s\n", pos.Filename, pos.Line, fnDecl.Name)
+				}
 				var passMod bool
 				passMod, err = pass.RunFunctionPass(fnDecl, pkg)
 				modified = modified || passMod

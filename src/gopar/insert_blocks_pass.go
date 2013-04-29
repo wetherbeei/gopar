@@ -34,27 +34,25 @@ func (v InsertBlockVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		// search the whole statement
 		for idx, b := range t.List {
 			if node == b {
-				fmt.Println("Attached new block at", t, idx, newBlock)
 				t.List[idx] = newBlock
 			}
 		}
 	case *ast.IfStmt:
 		if node == t.Body {
 			t.Body = newBlock
-			fmt.Println("Attached new block", newBlock)
 		}
 	case *ast.RangeStmt:
 		if node == t.Body {
 			t.Body = newBlock
-			fmt.Println("Attached new block", newBlock)
 		}
 	case *ast.ForStmt:
 		if node == t.Body {
 			t.Body = newBlock
-			fmt.Println("Attached new block", newBlock)
 		}
 	default:
-		fmt.Printf("Unknown parent %T\n", v.parent)
+		if *verbose {
+			fmt.Printf("Unknown parent %T\n", v.parent)
+		}
 	}
 
 	// insert a new empty block and record it

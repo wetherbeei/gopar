@@ -1,10 +1,4 @@
 // CPU-parallel (using goroutines)
-//
-//      var a, b []int
-//      rtlib.CPUParallel(func (_idx int) {
-//        <loop.variables>
-//        a[idx] += b[idx]
-//      }, start, stop)
 package rtlib
 
 import (

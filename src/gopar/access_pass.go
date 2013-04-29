@@ -172,7 +172,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 	dataBlock := NewAccessPassData()
 	b.Set(AccessPassType, dataBlock)
 	pos := p.Location(blockNode.Pos())
-	b.Printf("\x1b[32;1mBasicBlock %s:%d\x1b[0m %T %+v", pos.Filename, pos.Line, blockNode, blockNode)
+	if *verbose {
+		b.Printf("\x1b[32;1mBasicBlock %s:%d\x1b[0m %T %+v", pos.Filename, pos.Line, blockNode, blockNode)
+	}
 	// Helper functions.
 	Resolver := MakeResolver(b, p, pass.compiler)
 	// Define adds the identifier as being defined in this block
@@ -395,7 +397,6 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 			AccessExpr(e.X, ReadAccess)
 			AccessExpr(e.X, WriteAccess)
 		case *ast.AssignStmt:
-			b.Print("Assigning")
 			// a[idx], x[idx] = b+c+d, idx
 			// writes: a, x reads: idx, b, c, d
 			switch e.Tok {
@@ -403,15 +404,13 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				// multi-assign functions or type conversions
 				if len(e.Lhs) != len(e.Rhs) {
 					if len(e.Rhs) != 1 {
-						b.Printf("ERROR: invalid multi-assign: %d to %d", len(e.Lhs), len(e.Rhs))
+						panic(fmt.Sprintf("ERROR: invalid multi-assign: %d to %d", len(e.Lhs), len(e.Rhs)))
 					}
 					result := TypeOf(e.Rhs[0], Resolver).(*MultiType).Expand()
-					b.Print(result)
 					for i, lhs := range e.Lhs {
 						Define(lhs.(*ast.Ident).Name, result[i])
 					}
 				} else {
-					b.Print("single assign", e.Lhs)
 					// assign each individually
 					for i, expr := range e.Lhs {
 						if new, ok := expr.(*ast.Ident); ok {
@@ -464,7 +463,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 				} else {
 					// we can't see inside the function, assume all of the pointer args are
 					// written to
-					b.Printf("\x1b[33mOpaque function:\x1b[0m %s", fnTyp.String())
+					if *verbose {
+						b.Printf("\x1b[33mOpaque function:\x1b[0m %s", fnTyp.String())
+					}
 					classify := func(arg ast.Node, argTyp Type) {
 						if argTyp.PassByValue() {
 							AccessExpr(arg, ReadAccess)
@@ -483,7 +484,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 								Identifier{id: fmt.Sprintf("%s:%d", pos.Filename, pos.Line)},
 							},
 						}, WriteAccess)
-						b.Print("Function not safe", fnTyp.String())
+						if *verbose {
+							b.Print("Function not safe", fnTyp.String())
+						}
 					}
 
 					// TODO safety bug: what if an argument is a function?
@@ -539,7 +542,9 @@ func (pass *AccessPass) ParseBasicBlock(blockNode ast.Node, p *Package) {
 		case *ast.TypeAssertExpr:
 			AccessExpr(e.X, ReadAccess)
 		default:
-			b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", e, e)
+			if *verbose {
+				b.Printf("\x1b[33mUnknown node\x1b[0m %T %+v", e, e)
+			}
 		}
 	}
 	AccessExpr(blockNode, ReadAccess)

@@ -18,7 +18,6 @@ import (
 var BuiltinTypes map[string]Type
 
 func init() {
-	fmt.Println("Init: types.go")
 	BuiltinTypes = make(map[string]Type, 0)
 
 	builtin := []string{
@@ -693,7 +692,9 @@ func (t *FuncType) Call(args []Type) Type {
 	if t.customCall != nil {
 		return t.customCall(args)
 	} else {
-		fmt.Println("CALL", t.results)
+		if *verbose {
+			fmt.Println("CALL", t.results)
+		}
 		if len(t.results) > 1 {
 			return newMultiType(t.results...)
 		} else {
@@ -1069,7 +1070,9 @@ func typeOf(expr ast.Node, resolver Resolver, definition bool, complete bool) Ty
 		sliceTyp := TypeOf(t.X, resolver)
 		return newCustomIndexedType(sliceTyp.IndexValue(), sliceTyp.IndexKey(), false)
 	default:
-		fmt.Printf("Unhandled TypeOf(%T %+v)\n", expr, expr)
+		if *verbose {
+			fmt.Printf("Unhandled TypeOf(%T %+v)\n", expr, expr)
+		}
 	}
 	return nil
 }

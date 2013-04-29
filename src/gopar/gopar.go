@@ -11,7 +11,8 @@ import (
 	"strings"
 )
 
-var verbose = flag.Bool("verbose", true, "Print verbose compiler output")
+var verbose = flag.Bool("verbose", false, "Print verbose compiler output")
+var leaveSource = flag.Bool("source", false, "Don't delete the transformed source")
 
 func main() {
 	flag.Parse()
@@ -25,8 +26,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(dir)
-	//defer os.RemoveAll(dir)
+	if *verbose {
+		fmt.Println(dir)
+	}
+	if !*leaveSource {
+		defer os.RemoveAll(dir)
+	}
 
 	project := NewProject(compilepkg)
 
@@ -39,13 +44,17 @@ func main() {
 		if err != nil {
 			return
 		}
-		fmt.Println(pkgPath)
+		if *verbose {
+			fmt.Println(pkgPath)
+		}
 		var packageImports []string
 		pkg := project.get(pkgPath)
 		if pkg == nil {
 			return
 		}
-		fmt.Println("->", pkg.Imports())
+		if *verbose {
+			fmt.Println("->", pkg.Imports())
+		}
 		for _, i := range pkg.Imports() {
 			packageImports, err = importGraph(i)
 			if err != nil {
@@ -126,7 +135,9 @@ func main() {
 	for i, _ := range env {
 		if strings.HasPrefix(env[i], "GOPATH=") {
 			env[i] = os.ExpandEnv(fmt.Sprintf("GOPATH=%s:%s:${GOPATH}", dir, goparRoot))
-			fmt.Println(env[i])
+			if *verbose {
+				fmt.Println(env[i])
+			}
 		}
 	}
 	cmd.Env = env

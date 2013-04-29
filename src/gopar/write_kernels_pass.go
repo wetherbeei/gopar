@@ -152,12 +152,6 @@ func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modifie
 	data := pass.compiler.GetPassResult(ParallelizePassType, p).(*ParallelizeData)
 
 	for _, loop := range data.loops {
-		loop.kernelSource, err = generateOpenCL(loop, pass.compiler)
-		fmt.Println(loop.kernelSource)
-		if err != nil {
-			return
-		}
-
 		// aliasing checks (check each against each other)
 		for i, a := range loop.alias {
 			for j := i + 1; j < len(loop.alias); j++ {
@@ -167,6 +161,7 @@ func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modifie
 		}
 
 		// if rtlib.HasGPU() {} else {}
+		/* TODO: GPU/OpenCL support
 		hasGPU := &ast.IfStmt{
 			Cond: &ast.CallExpr{
 				Fun: &ast.SelectorExpr{
@@ -181,6 +176,9 @@ func (pass *WriteKernelsPass) RunModulePass(file *ast.File, p *Package) (modifie
 
 		cpuParBlock := &ast.BlockStmt{}
 		hasGPU.Else = cpuParBlock // Launch multiple goroutines
+		*/
+		cpuParBlock := &ast.BlockStmt{}
+		loop.parallel.List = append(loop.parallel.List, cpuParBlock)
 		/*
 			var a, b []int
 			rtlib.CPUParallel(func (_idx int) {

@@ -142,7 +142,9 @@ func (p *Project) write(dir string, pkg *Package) (err error) {
 	if err != nil {
 		return
 	}
-	fmt.Println("Writing", f.Name())
+	if *verbose {
+		fmt.Println("Writing", f.Name())
+	}
 	outputConfig.Fprint(f, p.fset, pkg.file)
 	f.Close()
 

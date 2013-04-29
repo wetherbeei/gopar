@@ -253,12 +253,8 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 							}
 						} else {
 							// package not found
-							// TODO: make this an error?
-							fmt.Println("Package not found:", path)
-							packageResolver = func(name string) Type {
-								fmt.Println("Empty package resolver", name)
-								return nil
-							}
+							err = fmt.Errorf("Package not found: %s", path)
+							return
 						}
 						pkgType := newPackageType(s)
 						pkgType.Complete(packageResolver)
@@ -272,7 +268,9 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 				}
 			}
 		default:
-			fmt.Printf("Unhandled Decl %T %+v", decl, decl)
+			if *verbose {
+				fmt.Printf("Unhandled Decl %T %+v", decl, decl)
+			}
 		}
 	}
 
@@ -280,13 +278,16 @@ func (pass *DefinedTypesPass) RunModulePass(file *ast.File, p *Package) (modifie
 	for name := range future {
 		undefined = append(undefined, name)
 	}
-	fmt.Println(undefined, future)
+
 	for _, name := range undefined {
 		typ := resolver(name)
 		if typ == nil {
-			panic(fmt.Sprintf("Could not resolve defined type %s", name))
+			err = fmt.Errorf("Could not resolve defined type %s", name)
+			return
 		}
-		fmt.Printf("%s = %s\n", name, typ)
+		if *verbose {
+			fmt.Printf("%s = %s\n", name, typ)
+		}
 	}
 
 	// fill in methods

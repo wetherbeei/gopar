@@ -297,10 +297,12 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 
 	// Check types of all arguments
 	for i, dep := range info.arguments {
-		block.Print(dep.String())
+		if *verbose {
+			block.Print(dep.String())
+		}
 		if dep.group[0].id == "$external" {
 			continue // can't resolve these
-			// TODO: what if they alias?
+			// TODO: what if external accesses alias?
 		}
 		dep.goType = TypeOf(dep.MakeNode(), resolver)
 		// see if this argument is also pass-by-reference (slice only), and add it
@@ -323,6 +325,7 @@ func canParallelize(loop *BasicBlock, resolver Resolver) (info *ParallelLoopInfo
 	}
 
 	// Check array type
+	// TODO: not a map or channel
 	var listDep Dependency
 	listDep.group = listIg.group
 	listDep.depType = ReadWrite
@@ -346,22 +349,21 @@ func (pass *ParallelizePass) RunBasicBlockPass(block *BasicBlock, p *Package) Ba
 	var err error
 	resolver := MakeResolver(block, p, pass.compiler)
 	info, err = canParallelize(block, resolver)
-
 	if err != nil {
-		block.Printf("\x1b[31;1mCan't parallelize loop\x1b[0m at %s", p.Location(block.node.Pos()))
-		block.Printf("-> %s", err.Error())
+		fmt.Printf("\n\x1b[31;1mCan't parallelize loop\x1b[0m at %s\n", p.Location(block.node.Pos()))
+		fmt.Printf("-> %s\n", err.Error())
 	} else if info != nil {
 		pos := p.Location(block.node.Pos())
 		info.name = fmt.Sprintf("%s_%d", strings.Replace(strings.Replace(pos.Filename, ".", "_", -1), "/", "_", -1), pos.Line)
-		block.Printf("\x1b[33;1mParallel loop\x1b[0m named %s", info.name)
-		block.Printf("Thread index = '%s'", info.indexVar)
-		block.Printf("Arguments:")
+		fmt.Printf("\n\x1b[33;1mParallel loop\x1b[0m at %s:%d\n", pos.Filename, pos.Line)
+		fmt.Printf("Thread index = '%s'\n", info.indexVar)
+		fmt.Printf("Arguments:\n")
 		for _, arg := range info.arguments {
-			block.Printf("  %s", arg.String())
+			fmt.Printf("  %s\n", arg.String())
 		}
-		block.Printf("Alias checks:")
+		fmt.Printf("Alias checks:\n")
 		for _, arg := range info.alias {
-			block.Printf("  %s", arg.String())
+			fmt.Printf("  %s\n", arg.String())
 		}
 		data.loops[block.node] = info
 	}
