@@ -31,7 +31,7 @@ Compiler output will explain why a loop could not be parallelized:
     git clone git://github.com/wetherbeei/gopar.git
     cd gopar
     GOPATH=`pwd`
-    go build gopar
+    go install gopar
     PATH=$PATH:`pwd`/bin
 
 ## Usage
